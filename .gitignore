@@ -10,39 +10,120 @@ build/
 .venv/
 venv/
 ENV/
+*.dylib
+*.dll
+*.so
+*.pyd
 
 # Node.js
 node_modules/
 .npm/
+.pnpm-store/
+.pnpm-debug.log
+.yarn/
+.yarnrc
+.pnp.*
+.eslintcache
 
 # macOS
 .DS_Store
 .AppleDouble
 .LSOverride
+Icon
+._*
+.Spotlight-V100
+.Trashes
 
 # VSCode/IDE
 .vscode/
 .idea/
 *.sublime-workspace
 *.sublime-project
+*.swp
+*.swo
+.project
+.classpath
+.settings/
 
 # Output/Temp
 output/
 *.log
 *.tmp
 *.swp
+*.bak
+*.cache
+*.pid
+*.seed
+*.pid.lock
 
 # Frontend build
 ai-demo-frontend/dist/
 ai-demo-frontend/.DS_Store
+ai-demo-frontend/coverage/
+ai-demo-frontend/.next/
+ai-demo-frontend/.nuxt/
+ai-demo-frontend/.output/
+ai-demo-frontend/.cache/
 
 # Backend build
 backend/output/
 backend/.DS_Store
+backend/__pycache__/
+backend/*.pyc
+backend/*.pyo
+backend/*.pyd
+backend/.Python
+backend/build/
+backend/develop-eggs/
+backend/downloads/
+backend/eggs/
+backend/.eggs/
+backend/lib/
+backend/lib64/
+backend/parts/
+backend/sdist/
+backend/var/
+backend/wheels/
+backend/*.egg-info/
+backend/.installed.cfg
+backend/*.egg
 
 # Render.com
 render.yaml
 
 # Others
 .env
-.env.* 
+.env.*
+*.log
+*.sqlite
+*.sqlite3
+*.db
+*.bak
+*.swp
+*.swo
+*~
+
+# Large files
+*.dylib
+*.dll
+*.so
+*.pyd
+*.whl
+*.tar.gz
+*.zip
+*.rar
+*.7z
+*.gz
+*.bz2
+*.xz
+*.lzma
+*.tar
+*.tgz
+*.tbz2
+*.txz
+*.tlz
+*.tar.lzma
+*.tar.lz
+*.tar.xz
+*.tar.bz2
+*.tar.gz 
