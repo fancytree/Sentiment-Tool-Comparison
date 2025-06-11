@@ -56,5 +56,5 @@ if __name__ == "__main__":
         "main:app",
         host="0.0.0.0",
         port=port,
-        workers=4 if ENV == "production" else 1
+        workers=1  # 减少到1个工作进程以节省内存
     ) 
