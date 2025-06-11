@@ -8,10 +8,19 @@ from general import app as general_app
 
 app = FastAPI()
 
-# 配置 CORS，允许前端开发服务器访问
+# 获取环境变量
+ENV = os.getenv("ENV", "development")
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
+
+# 配置 CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],  # 前端开发服务器地址
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        FRONTEND_URL,
+        "https://sentiment-analysis-tool.onrender.com"  # render.com 域名
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -42,4 +51,10 @@ async def health_check():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8001) 
+    port = int(os.getenv("PORT", 8001))
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=port,
+        workers=4 if ENV == "production" else 1
+    ) 

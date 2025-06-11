@@ -1,0 +1,48 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+.venv/
+venv/
+ENV/
+
+# Node.js
+node_modules/
+.npm/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# VSCode/IDE
+.vscode/
+.idea/
+*.sublime-workspace
+*.sublime-project
+
+# Output/Temp
+output/
+*.log
+*.tmp
+*.swp
+
+# Frontend build
+ai-demo-frontend/dist/
+ai-demo-frontend/.DS_Store
+
+# Backend build
+backend/output/
+backend/.DS_Store
+
+# Render.com
+render.yaml
+
+# Others
+.env
+.env.* 
