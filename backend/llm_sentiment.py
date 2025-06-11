@@ -22,7 +22,11 @@ api_key = os.getenv("OPENAI_API_KEY")
 if not api_key:
     raise ValueError("OPENAI_API_KEY environment variable is not set")
 
-client = OpenAI(api_key=api_key)
+# 初始化 OpenAI 客户端
+client = OpenAI(
+    api_key=api_key,
+    base_url=os.getenv("OPENAI_API_BASE", "https://api.openai.com/v1")
+)
 
 # 配置日志
 logging.basicConfig(
