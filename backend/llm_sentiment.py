@@ -4,6 +4,7 @@ import time
 import pandas as pd
 import csv
 from openai import OpenAI
+import httpx
 from datetime import datetime
 import logging
 import sys
@@ -19,14 +20,20 @@ load_dotenv()
 
 # OpenAI API 配置
 api_key = os.getenv("OPENAI_API_KEY")
-print(f"API Key loaded: {'Yes' if api_key else 'No'}")
 if not api_key:
     raise ValueError("OPENAI_API_KEY environment variable is not set")
+
+# 创建自定义的 HTTP 客户端，避免代理问题
+http_client = httpx.Client(
+    timeout=30.0,
+    limits=httpx.Limits(max_keepalive_connections=5, max_connections=10)
+)
 
 # 初始化 OpenAI 客户端
 client = OpenAI(
     api_key=api_key,
-    base_url="https://api.openai.com/v1"
+    base_url="https://api.openai.com/v1",
+    http_client=http_client
 )
 
 # 配置日志
