@@ -7,6 +7,7 @@ import avatarIcon from '../assets/icons/Avatar.png';
 import sendIcon from '../assets/icons/Send.svg';
 import paperclipIcon from '../assets/icons/Paperclip.svg';
 import Papa from 'papaparse';
+import { API_ENDPOINTS, DEFAULT_FETCH_OPTIONS } from '../config/api';
 
 // Add custom styles
 const styles = `
@@ -84,13 +85,9 @@ export default function TransformerSentiment() {
     setTableResult(null);
     
     try {
-      const response = await fetch('http://localhost:8001/api/transformer-sentiment/', {
+      const response = await fetch(API_ENDPOINTS.TRANSFORMER_SENTIMENT, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'Origin': 'http://localhost:5173'
-        },
+        ...DEFAULT_FETCH_OPTIONS,
         body: JSON.stringify({ text: text.trim() }),
       });
 
@@ -137,11 +134,10 @@ export default function TransformerSentiment() {
 
     try {
       console.log('Uploading file...');
-      const response = await fetch('http://localhost:8001/api/transformer-sentiment/upload', {
+      const response = await fetch(API_ENDPOINTS.TRANSFORMER_SENTIMENT_UPLOAD, {
         method: 'POST',
         headers: {
           'Accept': 'application/json',
-          'Origin': 'http://localhost:5173'
         },
         body: formData,
       });
@@ -173,7 +169,7 @@ export default function TransformerSentiment() {
         
         // 新增：分析成功后自动下载并解析CSV
         if (data.output_file) {
-          const csvRes = await fetch(`http://localhost:8001/api/transformer-sentiment/download/${data.output_file}`);
+          const csvRes = await fetch(API_ENDPOINTS.TRANSFORMER_SENTIMENT_DOWNLOAD(data.output_file));
           const csvText = await csvRes.text();
           const parsed = Papa.parse(csvText, { header: true });
           setCsvTableData(parsed.data);
@@ -585,7 +581,7 @@ export default function TransformerSentiment() {
 
           <button
             onClick={() => {
-              window.open(`http://localhost:8001/api/transformer-sentiment/download/${tableResult.output_file}`, '_blank');
+              window.open(API_ENDPOINTS.TRANSFORMER_SENTIMENT_DOWNLOAD(tableResult.output_file), '_blank');
             }}
             style={{
               padding: '8px 16px',

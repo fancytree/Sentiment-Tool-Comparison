@@ -6,6 +6,7 @@ import backIcon from '../assets/icons/back.svg';
 import avatarIcon from '../assets/icons/Avatar.png';
 import sendIcon from '../assets/icons/Send.svg';
 import paperclipIcon from '../assets/icons/Paperclip.svg';
+import { API_ENDPOINTS, DEFAULT_FETCH_OPTIONS } from '../config/api';
 
 // CSV解析函数 - 正确处理带引号的字段
 function parseCSVLine(line: string): string[] {
@@ -140,13 +141,9 @@ export default function LLMSentiment() {
     setTableResult(null);
     
     try {
-      const response = await fetch('http://localhost:8001/api/llm-sentiment/', {
+      const response = await fetch(API_ENDPOINTS.LLM_SENTIMENT, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'Origin': 'http://localhost:5177'
-        },
+        ...DEFAULT_FETCH_OPTIONS,
         body: JSON.stringify({ text: text.trim() }),
       });
 
@@ -199,11 +196,10 @@ export default function LLMSentiment() {
       const formData = new FormData();
       formData.append('file', file);
 
-      const response = await fetch('http://localhost:8001/api/llm-sentiment/upload', {
+      const response = await fetch(API_ENDPOINTS.LLM_SENTIMENT_UPLOAD, {
         method: 'POST',
         headers: {
           'Accept': 'application/json',
-          'Origin': 'http://localhost:5177'
         },
         body: formData,
       });
@@ -233,7 +229,7 @@ export default function LLMSentiment() {
       // 下载并解析生成的CSV文件数据用于显示
       try {
         console.log('Downloading CSV file for display:', data.output_file);
-        const csvResponse = await fetch(`http://localhost:8001/api/llm-sentiment/download/${data.output_file}`);
+        const csvResponse = await fetch(API_ENDPOINTS.LLM_SENTIMENT_DOWNLOAD(data.output_file));
         if (csvResponse.ok) {
           const csvText = await csvResponse.text();
           console.log('CSV file downloaded successfully');
@@ -313,13 +309,9 @@ export default function LLMSentiment() {
         analysis_data: analysisData
       };
 
-      const response = await fetch('http://localhost:8001/api/llm-sentiment/chat', {
+      const response = await fetch(API_ENDPOINTS.LLM_SENTIMENT_CHAT, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'Origin': 'http://localhost:5177'
-        },
+        ...DEFAULT_FETCH_OPTIONS,
         body: JSON.stringify(chatRequest),
       });
 
@@ -803,7 +795,7 @@ export default function LLMSentiment() {
 
           <button
             onClick={() => {
-              window.open(`http://localhost:8001/api/llm-sentiment/download/${tableResult.output_file}`, '_blank');
+              window.open(API_ENDPOINTS.LLM_SENTIMENT_DOWNLOAD(tableResult.output_file), '_blank');
             }}
             style={{
               padding: '8px 16px',
