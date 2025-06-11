@@ -19,6 +19,7 @@ load_dotenv()
 
 # OpenAI API 配置
 api_key = os.getenv("OPENAI_API_KEY")
+print(f"API Key loaded: {'Yes' if api_key else 'No'}")
 if not api_key:
     raise ValueError("OPENAI_API_KEY environment variable is not set")
 
