@@ -52,6 +52,7 @@
    Name: sentiment-app (或你喜欢的名称)
    Root Directory: ai-demo-frontend
    Build Command: npm install && npm run build
+   Start Command: npm run preview
    Publish Directory: dist
    ```
 4. 设置环境变量：
@@ -61,6 +62,8 @@
    （使用第一步记录的后端 URL）
 5. 点击 **Deploy**
 6. 等待部署完成，记录前端 URL（例如：`https://sentiment-app.onrender.com`）
+
+**注意**：如果遇到 "host not allowed" 错误，vite.config.ts 已经配置了 `allowedHosts` 来支持 render.com 域名。
 
 ### 第三步：更新后端 CORS
 1. 回到后端服务设置
@@ -114,6 +117,13 @@
 - 确认环境变量名称正确
 - 重新部署服务使环境变量生效
 - 检查构建日志
+
+#### 4. Vite "host not allowed" 错误
+**症状**：前端显示 "This host is not allowed" 错误
+**解决**：
+- vite.config.ts 已配置 `allowedHosts` 支持 render.com
+- 确认使用 `npm run preview` 作为启动命令
+- 如果使用自定义域名，需要添加到 `allowedHosts` 数组中
 
 ### 调试工具
 1. **浏览器开发者工具**：

@@ -24,6 +24,19 @@ export default defineConfig({
       },
     },
   },
+  preview: {
+    port: 4173,
+    host: true,
+    // 允许所有 render.com 的域名访问
+    allowedHosts: [
+      'localhost',
+      '127.0.0.1',
+      '.onrender.com',
+      'sentiment-tool-comparison.onrender.com',
+      // 添加其他可能的域名
+      '.render.com',
+    ],
+  },
   build: {
     outDir: 'dist',
     sourcemap: false,
