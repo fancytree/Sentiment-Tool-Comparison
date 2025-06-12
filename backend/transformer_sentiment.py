@@ -261,7 +261,7 @@ def enhanced_aspect_sentiment_analysis(text: str, aspect: str) -> Dict:
 
 def generate_aspect_reason(text: str, aspect: str, sentiment: str) -> str:
     """
-    生成方面分析的原因说明
+    生成方面分析的原因说明 - 简洁版本，不包含前缀描述
     """
     text_lower = text.lower()
     
@@ -269,36 +269,46 @@ def generate_aspect_reason(text: str, aspect: str, sentiment: str) -> str:
     positive_indicators = []
     negative_indicators = []
     
-    # 正面指标词汇
+    # 扩展的正面指标词汇
     positive_words = ['good', 'great', 'excellent', 'amazing', 'wonderful', 'fantastic', 'love', 'like', 'best', 'awesome',
-                     'perfect', 'brilliant', 'outstanding', 'superb', 'satisfied', 'happy', 'pleased', 'recommend']
+                     'perfect', 'brilliant', 'outstanding', 'superb', 'satisfied', 'happy', 'pleased', 'recommend',
+                     'beautiful', 'nice', 'fine', 'cool', 'fun', 'helpful', 'fast', 'quick', 'affordable', 'value']
     
-    # 负面指标词汇
+    # 扩展的负面指标词汇
     negative_words = ['bad', 'terrible', 'awful', 'hate', 'worst', 'horrible', 'disappointing', 'poor', 'useless',
-                     'problem', 'issue', 'trouble', 'difficulty', 'complaint', 'regret', 'waste', 'boring', 'slow']
+                     'problem', 'issue', 'trouble', 'difficulty', 'complaint', 'regret', 'waste', 'boring', 'slow',
+                     'expensive', 'overpriced', 'broken', 'defective', 'rude', 'unhelpful', 'delayed']
     
     words = text_lower.split()
     for word in words:
-        if word in positive_words:
-            positive_indicators.append(word)
-        elif word in negative_words:
-            negative_indicators.append(word)
+        # 去除标点符号
+        clean_word = word.strip('.,!?;:"()[]{}')
+        if clean_word in positive_words:
+            positive_indicators.append(clean_word)
+        elif clean_word in negative_words:
+            negative_indicators.append(clean_word)
     
-    # 生成原因描述
+    # 生成简洁的原因描述
     if sentiment == 'positive':
         if positive_indicators:
             key_words = ', '.join(positive_indicators[:3])  # 最多显示3个关键词
-            return f"Positive sentiment detected for {aspect} based on keywords: {key_words}"
+            return f"Keywords: {key_words}"
         else:
-            return f"Overall positive tone detected for {aspect}"
+            return "Overall positive tone"
     elif sentiment == 'negative':
         if negative_indicators:
             key_words = ', '.join(negative_indicators[:3])
-            return f"Negative sentiment detected for {aspect} based on keywords: {key_words}"
+            return f"Keywords: {key_words}"
         else:
-            return f"Overall negative tone detected for {aspect}"
+            return "Overall negative tone"
     else:
-        return f"Neutral sentiment detected for {aspect} - balanced or insufficient emotional indicators"
+        # 对于中性情感，提供更简洁的描述
+        all_indicators = positive_indicators + negative_indicators
+        if all_indicators:
+            key_words = ', '.join(all_indicators[:2])
+            return f"Mixed indicators: {key_words}"
+        else:
+            return "Balanced or insufficient emotional indicators"
 
 def simple_sentiment_analysis(text: str) -> Dict:
     """增强的基于规则的情感分析作为后备方案"""
@@ -574,7 +584,7 @@ async def download_file(filename: str):
     file_path = os.path.join('output', filename)
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="File not found")
-    return FileResponse(file_path, filename=filename)
+    return FileResponse(file_path, filename=filename) 
 
 @app.get("/health")
 async def health_check():

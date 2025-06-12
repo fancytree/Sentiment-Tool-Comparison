@@ -480,11 +480,11 @@ export default function GeneralAnalysis() {
           {/* 下载按钮 - 与TransformerSentiment保持一致 */}
           {fileResult.outputFile && (
             <button
-                              onClick={() => {
+              onClick={() => {
                   if (fileResult.outputFile) {
                     window.open(API_ENDPOINTS.GENERAL_DOWNLOAD(fileResult.outputFile), '_blank');
                   }
-                }}
+              }}
               style={{
                 padding: '8px 16px',
                 background: '#5D5FEF',
