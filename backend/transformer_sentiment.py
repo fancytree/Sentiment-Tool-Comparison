@@ -158,7 +158,7 @@ def analyze_aspect_sentiment(text: str, aspect: str) -> Dict:
         'overall': []  # 整体评价
     }
     
-    # 获取方面相关的句子
+    # 获取方面相关的句子和上下文
     sentences = text.split('.')
     relevant_sentences = []
     
@@ -171,10 +171,11 @@ def analyze_aspect_sentiment(text: str, aspect: str) -> Dict:
             if any(keyword in sentence_lower for keyword in keywords):
                 relevant_sentences.append(sentence.strip())
         
+        # 如果找到相关句子，使用相关句子；否则使用整个文本
         relevant_text = '. '.join(relevant_sentences) if relevant_sentences else text
     
-    # 分析相关文本的情感
-    sentiment_result = simple_sentiment_analysis(relevant_text)
+    # 使用增强的方面情感分析
+    sentiment_result = enhanced_aspect_sentiment_analysis(relevant_text, aspect)
     
     # 生成分析原因
     reason = generate_aspect_reason(relevant_text, aspect, sentiment_result['sentiment'])
@@ -185,6 +186,78 @@ def analyze_aspect_sentiment(text: str, aspect: str) -> Dict:
         'reason': reason,
         'relevant_text': relevant_text
     }
+
+def enhanced_aspect_sentiment_analysis(text: str, aspect: str) -> Dict:
+    """
+    增强的方面情感分析，针对特定方面优化
+    """
+    text_lower = text.lower()
+    
+    # 方面特定的正面和负面词汇
+    aspect_sentiment_words = {
+        'quality': {
+            'positive': ['excellent', 'outstanding', 'superior', 'high-quality', 'durable', 'solid', 'well-built'],
+            'negative': ['poor', 'cheap', 'flimsy', 'low-quality', 'defective', 'broken']
+        },
+        'price': {
+            'positive': ['affordable', 'reasonable', 'value', 'worth', 'cheap', 'budget-friendly'],
+            'negative': ['expensive', 'overpriced', 'costly', 'pricey', 'too much']
+        },
+        'service': {
+            'positive': ['helpful', 'responsive', 'friendly', 'professional', 'excellent'],
+            'negative': ['rude', 'unhelpful', 'slow', 'poor', 'terrible']
+        },
+        'delivery': {
+            'positive': ['fast', 'quick', 'prompt', 'timely', 'speedy'],
+            'negative': ['slow', 'delayed', 'late', 'long']
+        }
+    }
+    
+    # 通用情感词汇
+    general_positive = ['good', 'great', 'excellent', 'amazing', 'wonderful', 'fantastic', 'love', 'like', 'best', 'awesome']
+    general_negative = ['bad', 'terrible', 'awful', 'hate', 'worst', 'horrible', 'disappointing', 'poor', 'useless']
+    
+    # 获取方面特定词汇
+    aspect_words = aspect_sentiment_words.get(aspect, {'positive': [], 'negative': []})
+    
+    # 计算情感分数
+    positive_score = 0
+    negative_score = 0
+    
+    words = text_lower.split()
+    for word in words:
+        # 方面特定词汇权重更高
+        if word in aspect_words['positive']:
+            positive_score += 2.0
+        elif word in aspect_words['negative']:
+            negative_score += 2.0
+        # 通用词汇权重较低
+        elif word in general_positive:
+            positive_score += 1.0
+        elif word in general_negative:
+            negative_score += 1.0
+    
+    # 检查否定词
+    negation_words = ['not', "don't", "doesn't", "didn't", "won't", "wouldn't", "can't", "couldn't", "isn't", "aren't"]
+    has_negation = any(neg in text_lower for neg in negation_words)
+    
+    if has_negation:
+        # 如果有否定词，交换正负分数
+        positive_score, negative_score = negative_score, positive_score
+    
+    # 计算最终结果
+    total_score = positive_score + negative_score
+    if total_score == 0:
+        return {"sentiment": "neutral", "score": 0.5}
+    
+    if positive_score > negative_score:
+        confidence = min(0.95, 0.6 + (positive_score - negative_score) * 0.1)
+        return {"sentiment": "positive", "score": confidence}
+    elif negative_score > positive_score:
+        confidence = min(0.95, 0.6 + (negative_score - positive_score) * 0.1)
+        return {"sentiment": "negative", "score": confidence}
+    else:
+        return {"sentiment": "neutral", "score": 0.5}
 
 def generate_aspect_reason(text: str, aspect: str, sentiment: str) -> str:
     """
@@ -435,6 +508,40 @@ async def analyze_text(request: TextAnalysisRequest) -> AnalysisResult:
         logger.error(f"分析失败: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.post("/aspects")
+async def analyze_aspects(request: TextAnalysisRequest):
+    """
+    专门的方面分析端点，返回格式化的方面分析结果
+    """
+    try:
+        result = analyze_sentiment_with_aspects(request.text)
+        
+        # 格式化输出，突出显示每个方面的信息
+        formatted_result = {
+            "text": request.text,
+            "overall_analysis": {
+                "sentiment": result['sentiment'],
+                "confidence": result['confidence'],
+                "reason": result['reason']
+            },
+            "aspect_analysis": []
+        }
+        
+        # 添加每个方面的详细分析
+        if result.get('aspects'):
+            for aspect in result['aspects']:
+                formatted_result["aspect_analysis"].append({
+                    "aspect": aspect['aspect'],
+                    "sentiment": aspect['sentiment'],
+                    "confidence": aspect['confidence'],
+                    "reason": aspect['reason']
+                })
+        
+        return formatted_result
+    except Exception as e:
+        logger.error(f"方面分析失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/upload")
 async def upload_file(file: UploadFile = File(...)):
     try:
@@ -629,26 +736,27 @@ def analyze_file(file_path: str) -> Dict:
             # 更新统计
             sentiment_stats[sentiment_result['sentiment']] += 1
             
-            # 格式化方面分析结果
-            aspects_str = ""
-            if sentiment_result.get('aspects'):
-                aspect_summaries = []
-                for aspect in sentiment_result['aspects']:
-                    aspect_summaries.append(f"{aspect['aspect']}({aspect['sentiment']})")
-                aspects_str = "; ".join(aspect_summaries)
-            
-            # 创建新的行
-            new_row = {
+            # 创建基础行信息
+            base_row = {
                 'Review_ID': row.get('Review_ID', index + 1),
                 'Title': extract_title(cleaned_text),
                 'Content': cleaned_text,
-                'Sentiment': sentiment_result['sentiment'],
-                'Score': f"{sentiment_result['score']:.2f}",
-                'Polarity': f"{sentiment_result['polarity']:.2f}",
-                'Confidence': f"{sentiment_result['confidence']:.2f}",
-                'Reason': sentiment_result['reason'],
-                'Aspects': aspects_str
+                'Overall_Sentiment': sentiment_result['sentiment'],
+                'Overall_Score': f"{sentiment_result['score']:.2f}",
+                'Overall_Polarity': f"{sentiment_result['polarity']:.2f}",
+                'Overall_Confidence': f"{sentiment_result['confidence']:.2f}",
+                'Overall_Reason': sentiment_result['reason']
             }
+            
+            # 添加每个方面的详细信息
+            if sentiment_result.get('aspects'):
+                for i, aspect in enumerate(sentiment_result['aspects'], 1):
+                    base_row[f'Aspect_{i}'] = aspect['aspect']
+                    base_row[f'Aspect_{i}_Sentiment'] = aspect['sentiment']
+                    base_row[f'Aspect_{i}_Confidence'] = f"{aspect['confidence']:.2f}"
+                    base_row[f'Aspect_{i}_Reason'] = aspect['reason']
+            
+            new_row = base_row
             result_rows.append(new_row)
             
             # 添加到结果列表
