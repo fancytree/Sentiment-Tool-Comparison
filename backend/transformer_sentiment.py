@@ -1,3 +1,10 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Transformer情感分析服务
+支持方面分析、置信度评估和详细原因说明
+"""
+
 import os
 import pandas as pd
 from datetime import datetime
@@ -10,14 +17,12 @@ from pydantic import BaseModel
 import re
 import json
 import time
+from fastapi.middleware.cors import CORSMiddleware
 
 # 配置日志
 logging.basicConfig(
     level=logging.INFO,
-    format='%(message)s',
-    handlers=[
-        logging.StreamHandler(sys.stdout)
-    ]
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
 
@@ -53,6 +58,28 @@ class TableAnalysisResult(BaseModel):
     summary: Dict[str, int]
     output_file: str
     original_texts: Optional[List[str]] = None
+
+def safe_string(value, default="") -> str:
+    """
+    确保返回值是有效的字符串，防止前端charAt错误
+    """
+    if value is None:
+        return default
+    if not isinstance(value, str):
+        return str(value)
+    result = value.strip() if hasattr(value, 'strip') else str(value)
+    return result if result else default
+
+def validate_text_input(text) -> str:
+    """
+    验证和清理输入文本
+    """
+    if text is None:
+        return ""
+    if not isinstance(text, str):
+        text = str(text)
+    text = text.strip()
+    return text if text else ""
 
 # 延迟加载情感分析模型
 _sentiment_analyzer = None
@@ -263,6 +290,14 @@ def generate_aspect_reason(text: str, aspect: str, sentiment: str) -> str:
     """
     生成方面分析的原因说明 - 简洁版本，不包含前缀描述
     """
+    # 输入验证和安全处理
+    text = validate_text_input(text)
+    aspect = safe_string(aspect, "general")
+    sentiment = safe_string(sentiment, "neutral")
+    
+    if not text:
+        return "No text provided"
+    
     text_lower = text.lower()
     
     # 提取关键词作为原因
@@ -292,13 +327,13 @@ def generate_aspect_reason(text: str, aspect: str, sentiment: str) -> str:
     if sentiment == 'positive':
         if positive_indicators:
             key_words = ', '.join(positive_indicators[:3])  # 最多显示3个关键词
-            return f"Keywords: {key_words}"
+            return safe_string(f"Keywords: {key_words}", "Overall positive tone")
         else:
             return "Overall positive tone"
     elif sentiment == 'negative':
         if negative_indicators:
             key_words = ', '.join(negative_indicators[:3])
-            return f"Keywords: {key_words}"
+            return safe_string(f"Keywords: {key_words}", "Overall negative tone")
         else:
             return "Overall negative tone"
     else:
@@ -306,7 +341,7 @@ def generate_aspect_reason(text: str, aspect: str, sentiment: str) -> str:
         all_indicators = positive_indicators + negative_indicators
         if all_indicators:
             key_words = ', '.join(all_indicators[:2])
-            return f"Mixed indicators: {key_words}"
+            return safe_string(f"Mixed indicators: {key_words}", "Balanced emotional indicators")
         else:
             return "Balanced or insufficient emotional indicators"
 
@@ -390,6 +425,18 @@ def analyze_sentiment_with_aspects(text: str) -> Dict:
         Dict: 包含完整分析结果的字典
     """
     try:
+        # 输入验证
+        text = validate_text_input(text)
+        if not text:
+            return {
+                "sentiment": "neutral",
+                "score": 0.5,
+                "polarity": 0.0,
+                "confidence": 0.5,
+                "reason": "No text provided for analysis",
+                "aspects": []
+            }
+        
         # 1. 整体情感分析
         overall_sentiment = analyze_basic_sentiment(text)
         
@@ -401,33 +448,32 @@ def analyze_sentiment_with_aspects(text: str) -> Dict:
         for aspect in aspects:
             aspect_result = analyze_aspect_sentiment(text, aspect)
             aspect_analyses.append({
-                "aspect": aspect,
-                "sentiment": aspect_result['sentiment'],
-                "confidence": aspect_result['confidence'],
-                "reason": aspect_result['reason']
+                "aspect": safe_string(aspect, "general"),
+                "sentiment": safe_string(aspect_result.get('sentiment'), "neutral"),
+                "confidence": float(aspect_result.get('confidence', 0.5)),
+                "reason": safe_string(aspect_result.get('reason'), "No reason available")
             })
         
         # 4. 生成整体分析原因
-        overall_reason = generate_overall_reason(text, overall_sentiment['sentiment'], aspects)
+        overall_reason = generate_overall_reason(text, overall_sentiment.get('sentiment', 'neutral'), aspects)
         
         return {
-            "sentiment": overall_sentiment['sentiment'],
-            "score": overall_sentiment['score'],
-            "polarity": overall_sentiment['polarity'],
-            "confidence": overall_sentiment['score'],
-            "reason": overall_reason,
+            "sentiment": safe_string(overall_sentiment.get('sentiment'), "neutral"),
+            "score": float(overall_sentiment.get('score', 0.5)),
+            "polarity": float(overall_sentiment.get('polarity', 0.0)),
+            "confidence": float(overall_sentiment.get('score', 0.5)),
+            "reason": safe_string(overall_reason, "Analysis completed"),
             "aspects": aspect_analyses
         }
     except Exception as e:
         logger.error(f"Aspect analysis failed: {str(e)}")
-        # 如果分析失败，返回基础分析
-        basic_result = analyze_basic_sentiment(text)
+        # 如果分析失败，返回安全的默认值
         return {
-            "sentiment": basic_result['sentiment'],
-            "score": basic_result['score'],
-            "polarity": basic_result['polarity'],
-            "confidence": basic_result['score'],
-            "reason": f"Basic analysis: {basic_result['sentiment']} sentiment detected",
+            "sentiment": "neutral",
+            "score": 0.5,
+            "polarity": 0.0,
+            "confidence": 0.5,
+            "reason": safe_string(f"Analysis failed: {str(e)}", "Analysis error"),
             "aspects": []
         }
 
@@ -479,17 +525,32 @@ def generate_overall_reason(text: str, sentiment: str, aspects: List[str]) -> st
     """
     生成整体分析的原因说明
     """
-    aspect_str = ", ".join(aspects) if aspects else "general content"
+    # 输入验证和安全处理
+    text = validate_text_input(text)
+    sentiment = safe_string(sentiment, "neutral")
+    
+    if not text:
+        return "No text provided for analysis"
+    
+    # 安全处理aspects列表
+    safe_aspects = []
+    if aspects and isinstance(aspects, list):
+        for aspect in aspects:
+            safe_aspect = safe_string(aspect)
+            if safe_aspect:
+                safe_aspects.append(safe_aspect)
+    
+    aspect_str = ", ".join(safe_aspects) if safe_aspects else "general content"
     
     # 计算文本长度和复杂度
     word_count = len(text.split())
     
     if sentiment == 'positive':
-        return f"Positive sentiment detected across {aspect_str}. Analysis based on {word_count} words with positive emotional indicators."
+        return safe_string(f"Positive sentiment detected across {aspect_str}. Analysis based on {word_count} words with positive emotional indicators.", "Positive sentiment detected")
     elif sentiment == 'negative':
-        return f"Negative sentiment detected across {aspect_str}. Analysis based on {word_count} words with negative emotional indicators."
+        return safe_string(f"Negative sentiment detected across {aspect_str}. Analysis based on {word_count} words with negative emotional indicators.", "Negative sentiment detected")
     else:
-        return f"Neutral sentiment detected across {aspect_str}. Analysis based on {word_count} words with balanced emotional tone."
+        return safe_string(f"Neutral sentiment detected across {aspect_str}. Analysis based on {word_count} words with balanced emotional tone.", "Neutral sentiment detected")
 
 def ensure_output_dir():
     """
@@ -528,29 +589,39 @@ async def analyze_aspects(request: TextAnalysisRequest):
         
         # 格式化输出，突出显示每个方面的信息
         formatted_result = {
-            "text": request.text,
+            "text": safe_string(request.text, ""),
             "overall_analysis": {
-                "sentiment": result['sentiment'],
-                "confidence": result['confidence'],
-                "reason": result['reason']
+                "sentiment": safe_string(result.get('sentiment'), "neutral"),
+                "confidence": float(result.get('confidence', 0.5)),
+                "reason": safe_string(result.get('reason'), "No reason available")
             },
             "aspect_analysis": []
         }
         
         # 添加每个方面的详细分析
-        if result.get('aspects'):
+        if result.get('aspects') and isinstance(result['aspects'], list):
             for aspect in result['aspects']:
-                formatted_result["aspect_analysis"].append({
-                    "aspect": aspect['aspect'],
-                    "sentiment": aspect['sentiment'],
-                    "confidence": aspect['confidence'],
-                    "reason": aspect['reason']
-                })
+                if isinstance(aspect, dict):
+                    formatted_result["aspect_analysis"].append({
+                        "aspect": safe_string(aspect.get('aspect'), "general"),
+                        "sentiment": safe_string(aspect.get('sentiment'), "neutral"),
+                        "confidence": float(aspect.get('confidence', 0.5)),
+                        "reason": safe_string(aspect.get('reason'), "No reason available")
+                    })
         
         return formatted_result
     except Exception as e:
         logger.error(f"方面分析失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        # 返回安全的错误响应
+        return {
+            "text": safe_string(getattr(request, 'text', ''), ""),
+            "overall_analysis": {
+                "sentiment": "neutral",
+                "confidence": 0.5,
+                "reason": safe_string(f"Analysis failed: {str(e)}", "Analysis error")
+            },
+            "aspect_analysis": []
+        }
 
 @app.post("/upload")
 async def upload_file(file: UploadFile = File(...)):
