@@ -54,13 +54,22 @@ def get_sentiment_analyzer():
     if _sentiment_analyzer is None:
         try:
             logger.info("开始加载情感分析模型...")
-            # 检查可用内存，如果内存不足则直接使用后备方案
+            # 检查是否在render.com环境中，如果是则直接使用后备方案
+            import os
+            is_render_env = os.getenv('RENDER') or os.getenv('RENDER_SERVICE_ID')
+            
+            if is_render_env:
+                logger.info("检测到 render.com 环境，使用基于规则的情感分析以节省内存")
+                _sentiment_analyzer = "fallback"
+                return _sentiment_analyzer
+            
+            # 本地环境检查内存
             import psutil
             memory = psutil.virtual_memory()
             available_mb = memory.available / (1024 * 1024)
             logger.info(f"可用内存: {available_mb:.1f} MB")
             
-            if available_mb < 200:  # 如果可用内存少于200MB，使用后备方案
+            if available_mb < 1000:  # 如果可用内存少于1GB，使用后备方案
                 logger.warning("内存不足，使用基于规则的情感分析")
                 _sentiment_analyzer = "fallback"
                 return _sentiment_analyzer
@@ -88,18 +97,71 @@ def get_sentiment_analyzer():
     return _sentiment_analyzer
 
 def simple_sentiment_analysis(text: str) -> Dict:
-    """简单的基于规则的情感分析作为后备方案"""
-    positive_words = ['good', 'great', 'excellent', 'amazing', 'wonderful', 'fantastic', 'love', 'like', 'best', 'awesome']
-    negative_words = ['bad', 'terrible', 'awful', 'hate', 'worst', 'horrible', 'disgusting', 'annoying', 'frustrating', 'disappointing']
+    """增强的基于规则的情感分析作为后备方案"""
+    # 扩展的情感词汇表
+    positive_words = [
+        'good', 'great', 'excellent', 'amazing', 'wonderful', 'fantastic', 'love', 'like', 'best', 'awesome',
+        'perfect', 'brilliant', 'outstanding', 'superb', 'magnificent', 'incredible', 'marvelous', 'terrific',
+        'fabulous', 'exceptional', 'impressive', 'remarkable', 'delightful', 'enjoyable', 'pleasant', 'satisfied',
+        'happy', 'pleased', 'thrilled', 'excited', 'recommend', 'beautiful', 'nice', 'fine', 'cool', 'fun'
+    ]
+    
+    negative_words = [
+        'bad', 'terrible', 'awful', 'hate', 'worst', 'horrible', 'disgusting', 'annoying', 'frustrating', 'disappointing',
+        'poor', 'pathetic', 'useless', 'worthless', 'dreadful', 'appalling', 'atrocious', 'abysmal', 'disastrous',
+        'unacceptable', 'inadequate', 'inferior', 'defective', 'faulty', 'broken', 'failed', 'wrong', 'problem',
+        'issue', 'trouble', 'difficulty', 'complaint', 'regret', 'waste', 'boring', 'slow', 'expensive', 'overpriced'
+    ]
+    
+    # 强化词汇（增加权重）
+    intensifiers = ['very', 'extremely', 'incredibly', 'absolutely', 'totally', 'completely', 'really', 'quite']
     
     text_lower = text.lower()
-    positive_count = sum(1 for word in positive_words if word in text_lower)
-    negative_count = sum(1 for word in negative_words if word in text_lower)
     
-    if positive_count > negative_count:
-        return {"sentiment": "positive", "score": 0.7, "polarity": 0.7}
-    elif negative_count > positive_count:
-        return {"sentiment": "negative", "score": 0.7, "polarity": -0.7}
+    # 计算基础分数
+    positive_score = 0
+    negative_score = 0
+    
+    # 检查每个词汇
+    words = text_lower.split()
+    for i, word in enumerate(words):
+        # 检查强化词
+        multiplier = 1.5 if i > 0 and words[i-1] in intensifiers else 1.0
+        
+        if word in positive_words:
+            positive_score += multiplier
+        elif word in negative_words:
+            negative_score += multiplier
+    
+    # 检查完整短语（处理标点符号）
+    import re
+    clean_text = re.sub(r'[^\w\s]', ' ', text_lower)
+    for word in positive_words:
+        if word in clean_text:
+            positive_score += 0.5  # 额外加分
+    for word in negative_words:
+        if word in clean_text:
+            negative_score += 0.5  # 额外加分
+    
+    # 检查否定词（not, don't, isn't等）
+    negation_words = ['not', "don't", "doesn't", "didn't", "won't", "wouldn't", "can't", "couldn't", "isn't", "aren't", "wasn't", "weren't"]
+    has_negation = any(neg in text_lower for neg in negation_words)
+    
+    if has_negation:
+        # 如果有否定词，交换正负分数
+        positive_score, negative_score = negative_score, positive_score
+    
+    # 计算最终结果
+    total_score = positive_score + negative_score
+    if total_score == 0:
+        return {"sentiment": "neutral", "score": 0.5, "polarity": 0.0}
+    
+    if positive_score > negative_score:
+        confidence = min(0.95, 0.6 + (positive_score - negative_score) * 0.1)
+        return {"sentiment": "positive", "score": confidence, "polarity": confidence}
+    elif negative_score > positive_score:
+        confidence = min(0.95, 0.6 + (negative_score - positive_score) * 0.1)
+        return {"sentiment": "negative", "score": confidence, "polarity": -confidence}
     else:
         return {"sentiment": "neutral", "score": 0.5, "polarity": 0.0}
 
@@ -214,16 +276,23 @@ async def health_check():
     健康检查端点，显示模型状态
     """
     try:
+        import os
         import psutil
         memory = psutil.virtual_memory()
         
-        # 检查模型状态
+        # 检查环境和模型状态
+        is_render_env = os.getenv('RENDER') or os.getenv('RENDER_SERVICE_ID')
         analyzer = get_sentiment_analyzer()
         model_status = "transformer" if analyzer != "fallback" else "rule-based"
         
         return {
             "status": "healthy",
+            "environment": "render.com" if is_render_env else "local",
             "model_type": model_status,
+            "model_info": {
+                "description": "Enhanced rule-based analysis with 70+ sentiment words" if model_status == "rule-based" else "DistilBERT transformer model",
+                "memory_optimized": True if model_status == "rule-based" else False
+            },
             "memory_usage": {
                 "total_mb": round(memory.total / (1024 * 1024), 1),
                 "available_mb": round(memory.available / (1024 * 1024), 1),
