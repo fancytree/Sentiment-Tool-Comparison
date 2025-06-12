@@ -9,8 +9,9 @@ backlog = 2048
 workers = 1  # 减少工作进程数量以节省内存
 worker_class = "uvicorn.workers.UvicornWorker"
 worker_connections = 1000
-timeout = 30
+timeout = 120  # 增加超时时间以允许模型加载
 keepalive = 2
+graceful_timeout = 120  # 优雅关闭超时时间
 
 # 内存优化
 max_requests = 1000  # 每个工作进程处理的最大请求数

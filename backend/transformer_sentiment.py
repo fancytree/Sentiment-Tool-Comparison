@@ -53,16 +53,36 @@ def get_sentiment_analyzer():
     global _sentiment_analyzer
     if _sentiment_analyzer is None:
         try:
-            # 使用更轻量级的模型
+            logger.info("开始加载情感分析模型...")
+            # 检查可用内存，如果内存不足则直接使用后备方案
+            import psutil
+            memory = psutil.virtual_memory()
+            available_mb = memory.available / (1024 * 1024)
+            logger.info(f"可用内存: {available_mb:.1f} MB")
+            
+            if available_mb < 200:  # 如果可用内存少于200MB，使用后备方案
+                logger.warning("内存不足，使用基于规则的情感分析")
+                _sentiment_analyzer = "fallback"
+                return _sentiment_analyzer
+            
+            # 使用更轻量级的模型和配置
             from transformers import pipeline
+            import torch
+            
+            # 设置为CPU模式以节省内存
+            device = -1  # CPU
+            
             _sentiment_analyzer = pipeline(
                 "sentiment-analysis",
-                model="distilbert-base-uncased-finetuned-sst-2-english",  # 更轻量级的模型
-                return_all_scores=True
+                model="distilbert-base-uncased-finetuned-sst-2-english",  # 轻量级模型
+                return_all_scores=True,
+                device=device,
+                model_kwargs={"torch_dtype": torch.float32}  # 使用float32而不是float64
             )
-            logger.info("Sentiment analysis model loaded successfully")
+            logger.info("✅ 情感分析模型加载成功")
         except Exception as e:
-            logger.error(f"Failed to load sentiment analysis model: {str(e)}")
+            logger.error(f"❌ 模型加载失败: {str(e)}")
+            logger.info("🔄 切换到基于规则的情感分析")
             # 如果模型加载失败，使用简单的基于规则的分析
             _sentiment_analyzer = "fallback"
     return _sentiment_analyzer
@@ -141,9 +161,17 @@ async def analyze_text(request: TextAnalysisRequest) -> AnalysisResult:
     分析单个文本的情感
     """
     try:
+        # 预热模型（如果还没有加载）
+        analyzer = get_sentiment_analyzer()
+        if analyzer != "fallback":
+            logger.info("使用 Transformer 模型进行分析")
+        else:
+            logger.info("使用基于规则的分析")
+            
         result = analyze_sentiment(request.text)
         return AnalysisResult(**result)
     except Exception as e:
+        logger.error(f"分析失败: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/upload")
@@ -178,7 +206,35 @@ async def download_file(filename: str):
     file_path = os.path.join('output', filename)
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="File not found")
-    return FileResponse(file_path, filename=filename) 
+    return FileResponse(file_path, filename=filename)
+
+@app.get("/health")
+async def health_check():
+    """
+    健康检查端点，显示模型状态
+    """
+    try:
+        import psutil
+        memory = psutil.virtual_memory()
+        
+        # 检查模型状态
+        analyzer = get_sentiment_analyzer()
+        model_status = "transformer" if analyzer != "fallback" else "rule-based"
+        
+        return {
+            "status": "healthy",
+            "model_type": model_status,
+            "memory_usage": {
+                "total_mb": round(memory.total / (1024 * 1024), 1),
+                "available_mb": round(memory.available / (1024 * 1024), 1),
+                "used_percent": memory.percent
+            }
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "error": str(e)
+        } 
 
 def clean_text(text):
     """
