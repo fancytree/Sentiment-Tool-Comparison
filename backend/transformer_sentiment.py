@@ -118,14 +118,14 @@ def get_sentiment_analyzer():
             device = -1  # CPU
             
             _sentiment_analyzer = pipeline(
-                "sentiment-analysis",
+        "sentiment-analysis",
                 model="distilbert-base-uncased-finetuned-sst-2-english",  # 轻量级模型
                 return_all_scores=True,
                 device=device,
                 model_kwargs={"torch_dtype": torch.float32}  # 使用float32而不是float64
             )
             logger.info("✅ 情感分析模型加载成功")
-        except Exception as e:
+except Exception as e:
             logger.error(f"❌ 模型加载失败: {str(e)}")
             logger.info("🔄 切换到基于规则的情感分析")
             # 如果模型加载失败，使用简单的基于规则的分析
@@ -169,50 +169,54 @@ def extract_aspects(text: str) -> List[str]:
 def analyze_aspect_sentiment(text: str, aspect: str) -> Dict:
     """
     分析特定方面的情感
+    
+    Args:
+        text (str): 要分析的文本
+        aspect (str): 要分析的方面
+    
+    Returns:
+        Dict: 包含方面分析结果的字典
     """
-    # 方面相关的上下文窗口
-    aspect_keywords = {
-        'quality': ['quality', 'build', 'material', 'construction', 'durability', 'craftsmanship'],
-        'price': ['price', 'cost', 'expensive', 'cheap', 'affordable', 'value', 'money', 'budget'],
-        'service': ['service', 'support', 'staff', 'customer', 'help', 'assistance', 'response'],
-        'delivery': ['delivery', 'shipping', 'arrival', 'fast', 'slow', 'quick', 'time', 'speed'],
-        'design': ['design', 'look', 'appearance', 'style', 'color', 'beautiful', 'ugly', 'aesthetic'],
-        'usability': ['easy', 'difficult', 'user', 'interface', 'simple', 'complex', 'convenient'],
-        'performance': ['performance', 'speed', 'fast', 'slow', 'efficient', 'work', 'function'],
-        'features': ['feature', 'function', 'capability', 'option', 'tool', 'functionality'],
-        'packaging': ['package', 'packaging', 'box', 'wrap', 'container', 'presentation'],
-        'size': ['size', 'big', 'small', 'large', 'tiny', 'compact', 'huge', 'dimension'],
-        'overall': []  # 整体评价
-    }
-    
-    # 获取方面相关的句子和上下文
-    sentences = text.split('.')
-    relevant_sentences = []
-    
-    if aspect == 'overall':
-        relevant_text = text
-    else:
-        keywords = aspect_keywords.get(aspect, [])
-        for sentence in sentences:
-            sentence_lower = sentence.lower()
-            if any(keyword in sentence_lower for keyword in keywords):
-                relevant_sentences.append(sentence.strip())
+    try:
+        # 获取相关句子
+        relevant_sentences = get_relevant_sentences(text, aspect)
+        if not relevant_sentences:
+            return {
+                "sentiment": "neutral",
+                "confidence": 0.5,
+                "reason": f"No specific content found about {aspect}"
+            }
         
-        # 如果找到相关句子，使用相关句子；否则使用整个文本
-        relevant_text = '. '.join(relevant_sentences) if relevant_sentences else text
-    
-    # 使用增强的方面情感分析
-    sentiment_result = enhanced_aspect_sentiment_analysis(relevant_text, aspect)
-    
-    # 生成分析原因
-    reason = generate_aspect_reason(relevant_text, aspect, sentiment_result['sentiment'])
-    
-    return {
-        'sentiment': sentiment_result['sentiment'],
-        'confidence': sentiment_result['score'],
-        'reason': reason,
-        'relevant_text': relevant_text
-    }
+        # 分析情感
+        analyzer = get_sentiment_analyzer()
+        if analyzer == "fallback":
+            # 使用简单的基于规则的分析
+            result = simple_sentiment_analysis(" ".join(relevant_sentences))
+        else:
+            # 使用 Transformer 模型
+            results = analyzer(" ".join(relevant_sentences))
+            sentiment = max(results[0], key=lambda x: x['score'])
+            result = {
+                "sentiment": sentiment['label'].lower(),
+                "score": sentiment['score'],
+                "confidence": sentiment['score']
+            }
+        
+        # 生成原因
+        reason = generate_aspect_reason(aspect, result['sentiment'], relevant_sentences)
+        
+        return {
+            "sentiment": result.get('sentiment', 'neutral'),
+            "confidence": float(result.get('confidence', 0.5)),
+            "reason": safe_string(reason, f"No specific reason available for {aspect}")
+        }
+    except Exception as e:
+        logger.error(f"Aspect sentiment analysis failed: {str(e)}")
+        return {
+            "sentiment": "neutral",
+            "confidence": 0.5,
+            "reason": f"Analysis failed for {aspect}: {str(e)}"
+        }
 
 def enhanced_aspect_sentiment_analysis(text: str, aspect: str) -> Dict:
     """
@@ -286,64 +290,45 @@ def enhanced_aspect_sentiment_analysis(text: str, aspect: str) -> Dict:
     else:
         return {"sentiment": "neutral", "score": 0.5}
 
-def generate_aspect_reason(text: str, aspect: str, sentiment: str) -> str:
+def generate_aspect_reason(aspect: str, sentiment: str, relevant_sentences: List[str]) -> str:
     """
-    生成方面分析的原因说明 - 简洁版本，不包含前缀描述
+    生成方面分析的原因
+    
+    Args:
+        aspect (str): 分析的方面
+        sentiment (str): 情感分析结果
+        relevant_sentences (List[str]): 相关句子列表
+    
+    Returns:
+        str: 分析原因
     """
-    # 输入验证和安全处理
-    text = validate_text_input(text)
-    aspect = safe_string(aspect, "general")
-    sentiment = safe_string(sentiment, "neutral")
-    
-    if not text:
-        return "No text provided"
-    
-    text_lower = text.lower()
-    
-    # 提取关键词作为原因
-    positive_indicators = []
-    negative_indicators = []
-    
-    # 扩展的正面指标词汇
-    positive_words = ['good', 'great', 'excellent', 'amazing', 'wonderful', 'fantastic', 'love', 'like', 'best', 'awesome',
-                     'perfect', 'brilliant', 'outstanding', 'superb', 'satisfied', 'happy', 'pleased', 'recommend',
-                     'beautiful', 'nice', 'fine', 'cool', 'fun', 'helpful', 'fast', 'quick', 'affordable', 'value']
-    
-    # 扩展的负面指标词汇
-    negative_words = ['bad', 'terrible', 'awful', 'hate', 'worst', 'horrible', 'disappointing', 'poor', 'useless',
-                     'problem', 'issue', 'trouble', 'difficulty', 'complaint', 'regret', 'waste', 'boring', 'slow',
-                     'expensive', 'overpriced', 'broken', 'defective', 'rude', 'unhelpful', 'delayed']
-    
-    words = text_lower.split()
-    for word in words:
-        # 去除标点符号
-        clean_word = word.strip('.,!?;:"()[]{}')
-        if clean_word in positive_words:
-            positive_indicators.append(clean_word)
-        elif clean_word in negative_words:
-            negative_indicators.append(clean_word)
-    
-    # 生成简洁的原因描述
-    if sentiment == 'positive':
-        if positive_indicators:
-            key_words = ', '.join(positive_indicators[:3])  # 最多显示3个关键词
-            return safe_string(f"Keywords: {key_words}", "Overall positive tone")
+    try:
+        # 情感关键词
+        sentiment_keywords = {
+            'positive': ['good', 'great', 'excellent', 'amazing', 'wonderful', 'perfect', 'best', 'love', 'like'],
+            'negative': ['bad', 'poor', 'terrible', 'awful', 'worst', 'hate', 'dislike', 'problem', 'issue'],
+            'neutral': ['okay', 'fine', 'average', 'normal', 'standard', 'usual']
+        }
+        
+        # 获取情感关键词
+        keywords = sentiment_keywords.get(sentiment.lower(), [])
+        
+        # 在相关句子中查找情感关键词
+        found_keywords = []
+        for sentence in relevant_sentences:
+            sentence_lower = sentence.lower()
+            for keyword in keywords:
+                if keyword in sentence_lower:
+                    found_keywords.append(keyword)
+        
+        # 生成原因
+        if found_keywords:
+            return f"Found {sentiment} sentiment keywords: {', '.join(found_keywords)} in the text about {aspect}"
         else:
-            return "Overall positive tone"
-    elif sentiment == 'negative':
-        if negative_indicators:
-            key_words = ', '.join(negative_indicators[:3])
-            return safe_string(f"Keywords: {key_words}", "Overall negative tone")
-        else:
-            return "Overall negative tone"
-    else:
-        # 对于中性情感，提供更简洁的描述
-        all_indicators = positive_indicators + negative_indicators
-        if all_indicators:
-            key_words = ', '.join(all_indicators[:2])
-            return safe_string(f"Mixed indicators: {key_words}", "Balanced emotional indicators")
-        else:
-            return "Balanced or insufficient emotional indicators"
+            return f"Overall {sentiment} sentiment detected for {aspect} based on context"
+    except Exception as e:
+        logger.error(f"Failed to generate aspect reason: {str(e)}")
+        return f"Unable to generate detailed reason for {aspect} analysis"
 
 def simple_sentiment_analysis(text: str) -> Dict:
     """增强的基于规则的情感分析作为后备方案"""
@@ -447,22 +432,27 @@ def analyze_sentiment_with_aspects(text: str) -> Dict:
         aspect_analyses = []
         for aspect in aspects:
             aspect_result = analyze_aspect_sentiment(text, aspect)
+            # 确保 sentiment 字段有默认值
+            sentiment = aspect_result.get('sentiment', 'neutral')
+            if not sentiment or sentiment.strip() == '':
+                sentiment = 'neutral'
+            
             aspect_analyses.append({
                 "aspect": safe_string(aspect, "general"),
-                "sentiment": safe_string(aspect_result.get('sentiment'), "neutral"),
+                "sentiment": safe_string(sentiment, "neutral"),
                 "confidence": float(aspect_result.get('confidence', 0.5)),
                 "reason": safe_string(aspect_result.get('reason'), "No reason available")
             })
         
-        # 4. 生成整体分析原因
-        overall_reason = generate_overall_reason(text, overall_sentiment.get('sentiment', 'neutral'), aspects)
+        # 4. 生成整体分析的原因
+        overall_reason = generate_overall_reason(text, overall_sentiment)
         
         return {
-            "sentiment": safe_string(overall_sentiment.get('sentiment'), "neutral"),
+            "sentiment": overall_sentiment.get('sentiment', 'neutral'),
             "score": float(overall_sentiment.get('score', 0.5)),
             "polarity": float(overall_sentiment.get('polarity', 0.0)),
-            "confidence": float(overall_sentiment.get('score', 0.5)),
-            "reason": safe_string(overall_reason, "Analysis completed"),
+            "confidence": float(overall_sentiment.get('confidence', 0.5)),
+            "reason": safe_string(overall_reason, "No reason available"),
             "aspects": aspect_analyses
         }
     except Exception as e:
@@ -521,36 +511,46 @@ def analyze_basic_sentiment(text: str) -> Dict:
         # 如果模型分析失败，使用简单的基于规则的分析
         return simple_sentiment_analysis(text)
 
-def generate_overall_reason(text: str, sentiment: str, aspects: List[str]) -> str:
+def generate_overall_reason(text: str, overall_sentiment: Dict) -> str:
     """
-    生成整体分析的原因说明
+    生成整体分析的原因
+    
+    Args:
+        text (str): 要分析的文本
+        overall_sentiment (Dict): 整体情感分析结果
+    
+    Returns:
+        str: 分析原因
     """
-    # 输入验证和安全处理
-    text = validate_text_input(text)
-    sentiment = safe_string(sentiment, "neutral")
-    
-    if not text:
-        return "No text provided for analysis"
-    
-    # 安全处理aspects列表
-    safe_aspects = []
-    if aspects and isinstance(aspects, list):
-        for aspect in aspects:
-            safe_aspect = safe_string(aspect)
-            if safe_aspect:
-                safe_aspects.append(safe_aspect)
-    
-    aspect_str = ", ".join(safe_aspects) if safe_aspects else "general content"
-    
-    # 计算文本长度和复杂度
-    word_count = len(text.split())
-    
-    if sentiment == 'positive':
-        return safe_string(f"Positive sentiment detected across {aspect_str}. Analysis based on {word_count} words with positive emotional indicators.", "Positive sentiment detected")
-    elif sentiment == 'negative':
-        return safe_string(f"Negative sentiment detected across {aspect_str}. Analysis based on {word_count} words with negative emotional indicators.", "Negative sentiment detected")
-    else:
-        return safe_string(f"Neutral sentiment detected across {aspect_str}. Analysis based on {word_count} words with balanced emotional tone.", "Neutral sentiment detected")
+    try:
+        sentiment = overall_sentiment.get('sentiment', 'neutral')
+        confidence = overall_sentiment.get('confidence', 0.5)
+        
+        # 情感关键词
+        sentiment_keywords = {
+            'positive': ['good', 'great', 'excellent', 'amazing', 'wonderful', 'perfect', 'best', 'love', 'like'],
+            'negative': ['bad', 'poor', 'terrible', 'awful', 'worst', 'hate', 'dislike', 'problem', 'issue'],
+            'neutral': ['okay', 'fine', 'average', 'normal', 'standard', 'usual']
+        }
+        
+        # 获取情感关键词
+        keywords = sentiment_keywords.get(sentiment.lower(), [])
+        
+        # 在文本中查找情感关键词
+        found_keywords = []
+        text_lower = text.lower()
+        for keyword in keywords:
+            if keyword in text_lower:
+                found_keywords.append(keyword)
+        
+        # 生成原因
+        if found_keywords:
+            return f"Found {sentiment} sentiment keywords: {', '.join(found_keywords)} with {confidence:.2f} confidence"
+        else:
+            return f"Overall {sentiment} sentiment detected with {confidence:.2f} confidence based on context"
+    except Exception as e:
+        logger.error(f"Failed to generate overall reason: {str(e)}")
+        return "Unable to generate detailed reason for overall analysis"
 
 def ensure_output_dir():
     """
@@ -838,7 +838,7 @@ def analyze_file(file_path: str) -> Dict:
                     base_row[f'Aspect_{i}_Reason'] = aspect['reason']
             
             new_row = base_row
-            result_rows.append(new_row)
+                result_rows.append(new_row)
             
             # 添加到结果列表
             results.append({
@@ -888,4 +888,46 @@ def detect_text_column(df: pd.DataFrame) -> Optional[str]:
 
 # 确保输出目录存在
 OUTPUT_DIR = "output"
-os.makedirs(OUTPUT_DIR, exist_ok=True) 
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+def get_relevant_sentences(text: str, aspect: str) -> List[str]:
+    """
+    获取与特定方面相关的句子
+    
+    Args:
+        text (str): 要分析的文本
+        aspect (str): 要分析的方面
+    
+    Returns:
+        List[str]: 相关句子列表
+    """
+    # 方面相关的上下文窗口
+    aspect_keywords = {
+        'quality': ['quality', 'build', 'material', 'construction', 'durability', 'craftsmanship'],
+        'price': ['price', 'cost', 'expensive', 'cheap', 'affordable', 'value', 'money', 'budget'],
+        'service': ['service', 'support', 'staff', 'customer', 'help', 'assistance', 'response'],
+        'delivery': ['delivery', 'shipping', 'arrival', 'fast', 'slow', 'quick', 'time', 'speed'],
+        'design': ['design', 'look', 'appearance', 'style', 'color', 'beautiful', 'ugly', 'aesthetic'],
+        'usability': ['easy', 'difficult', 'user', 'interface', 'simple', 'complex', 'convenient'],
+        'performance': ['performance', 'speed', 'fast', 'slow', 'efficient', 'work', 'function'],
+        'features': ['feature', 'function', 'capability', 'option', 'tool', 'functionality'],
+        'packaging': ['package', 'packaging', 'box', 'wrap', 'container', 'presentation'],
+        'size': ['size', 'big', 'small', 'large', 'tiny', 'compact', 'huge', 'dimension'],
+        'overall': []  # 整体评价
+    }
+    
+    # 获取方面相关的句子和上下文
+    sentences = text.split('.')
+    relevant_sentences = []
+    
+    if aspect == 'overall':
+        return [text]
+    
+    keywords = aspect_keywords.get(aspect, [])
+    for sentence in sentences:
+        sentence_lower = sentence.lower()
+        if any(keyword in sentence_lower for keyword in keywords):
+            relevant_sentences.append(sentence.strip())
+    
+    # 如果找到相关句子，返回相关句子；否则返回整个文本
+    return relevant_sentences if relevant_sentences else [text] 
