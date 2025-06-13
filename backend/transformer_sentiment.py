@@ -118,14 +118,14 @@ def get_sentiment_analyzer():
             device = -1  # CPU
             
             _sentiment_analyzer = pipeline(
-        "sentiment-analysis",
+                "sentiment-analysis",
                 model="distilbert-base-uncased-finetuned-sst-2-english",  # 轻量级模型
                 return_all_scores=True,
                 device=device,
                 model_kwargs={"torch_dtype": torch.float32}  # 使用float32而不是float64
             )
             logger.info("✅ 情感分析模型加载成功")
-except Exception as e:
+        except Exception as e:
             logger.error(f"❌ 模型加载失败: {str(e)}")
             logger.info("🔄 切换到基于规则的情感分析")
             # 如果模型加载失败，使用简单的基于规则的分析
@@ -837,8 +837,7 @@ def analyze_file(file_path: str) -> Dict:
                     base_row[f'Aspect_{i}_Confidence'] = f"{aspect['confidence']:.2f}"
                     base_row[f'Aspect_{i}_Reason'] = aspect['reason']
             
-            new_row = base_row
-                result_rows.append(new_row)
+            result_rows.append(base_row)
             
             # 添加到结果列表
             results.append({
