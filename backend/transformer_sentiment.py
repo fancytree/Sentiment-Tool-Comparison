@@ -64,11 +64,19 @@ def safe_string(value, default="") -> str:
     确保返回值是有效的字符串，防止前端charAt错误
     """
     if value is None:
-        return default
+        return str(default) if default else ""
     if not isinstance(value, str):
-        return str(value)
-    result = value.strip() if hasattr(value, 'strip') else str(value)
-    return result if result else default
+        try:
+            value = str(value)
+        except:
+            return str(default) if default else ""
+    
+    # 确保是字符串并去除空白
+    try:
+        result = value.strip() if hasattr(value, 'strip') else str(value)
+        return result if result else (str(default) if default else "")
+    except:
+        return str(default) if default else ""
 
 def validate_text_input(text) -> str:
     """
@@ -504,7 +512,8 @@ def analyze_basic_sentiment(text: str) -> Dict:
         return {
             "sentiment": sentiment_label,
             "score": sentiment['score'],
-            "polarity": polarity
+            "polarity": polarity,
+            "confidence": sentiment['score']  # 添加缺失的confidence字段
         }
     except Exception as e:
         logger.error(f"Basic analysis failed: {str(e)}")
@@ -696,70 +705,98 @@ def clean_text(text):
     """
     清理文本数据
     """
-    if not isinstance(text, str):
+    try:
+        if not isinstance(text, str) or not text:
+            return ""
+        # 移除特殊标记
+        text = re.sub(r'###\s*(USER|ASSISTANT):\s*', '', text)
+        # 移除多余的空白字符
+        text = ' '.join(text.split())
+        return text if text else ""
+    except Exception as e:
+        logger.error(f"Error cleaning text: {str(e)}")
         return ""
-    # 移除特殊标记
-    text = re.sub(r'###\s*(USER|ASSISTANT):\s*', '', text)
-    # 移除多余的空白字符
-    text = ' '.join(text.split())
-    return text
 
 def extract_title(text):
     """
     从文本中提取标题
     """
-    if not isinstance(text, str):
-        return ""
-    
-    # 清理文本
-    text = clean_text(text)
-    
-    # 如果文本很短，直接返回
-    if len(text) <= 50:
-        return text
-    
-    # 尝试提取第一句话作为标题
-    sentences = re.split(r'[.!?。！？]', text)
-    if sentences:
-        title = sentences[0].strip()
-        if len(title) > 10:  # 确保标题有意义
-            return title[:50] + "..." if len(title) > 50 else title
-    
-    # 如果没有找到合适的标题，返回前50个字符
-    return text[:50] + "..." if len(text) > 50 else text
+    try:
+        if not isinstance(text, str) or not text:
+            return "No Title"
+        
+        # 清理文本
+        text = clean_text(text)
+        if not text:
+            return "No Title"
+        
+        # 如果文本很短，直接返回
+        if len(text) <= 50:
+            return text
+        
+        # 尝试提取第一句话作为标题
+        sentences = re.split(r'[.!?。！？]', text)
+        if sentences and sentences[0]:
+            title = sentences[0].strip()
+            if len(title) > 10:  # 确保标题有意义
+                return title[:50] + "..." if len(title) > 50 else title
+        
+        # 如果没有找到合适的标题，返回前50个字符
+        return text[:50] + "..." if len(text) > 50 else text
+    except Exception as e:
+        logger.error(f"Error extracting title: {str(e)}")
+        return "No Title"
 
 def read_csv_file(file_path: str) -> pd.DataFrame:
     """
     读取CSV文件，支持多种分隔符
     """
     try:
-        # 首先尝试使用分号作为分隔符
+        # 首先尝试标准的CSV读取（逗号分隔，支持引号）
         df = pd.read_csv(
             file_path,
-            sep=';',
+            sep=',',
             encoding='utf-8',
+            quotechar='"',
             quoting=1,  # QUOTE_ALL
             engine='python',
             on_bad_lines='skip'
         )
-        logging.info(f"Successfully read CSV file with {len(df)} rows and columns: {df.columns.tolist()}")
+        
+        # 检查是否只有一列且列名包含分号，说明应该用分号分隔
+        if len(df.columns) == 1 and ';' in df.columns[0]:
+            logging.info("Detected semicolon-separated data, retrying with semicolon separator")
+            raise ValueError("Need to use semicolon separator")
+        
+        logging.info(f"Successfully read CSV file with comma separator: {len(df)} rows and columns: {df.columns.tolist()}")
+        
+        # 打印前几行数据用于调试
+        if not df.empty:
+            logging.info(f"First row data: {df.iloc[0].to_dict()}")
+        
         return df
     except Exception as e:
-        logging.error(f"Error reading CSV with semicolon separator: {str(e)}")
+        logging.error(f"Error reading CSV with comma separator: {str(e)}")
         try:
-            # 如果失败，尝试使用逗号作为分隔符
+            # 如果失败，尝试使用分号作为分隔符
             df = pd.read_csv(
                 file_path,
-                sep=',',
+                sep=';',
                 encoding='utf-8',
+                quotechar='"',
                 quoting=1,
                 engine='python',
                 on_bad_lines='skip'
             )
-            logging.info(f"Successfully read CSV file with comma separator: {len(df)} rows")
+            logging.info(f"Successfully read CSV file with semicolon separator: {len(df)} rows and columns: {df.columns.tolist()}")
+            
+            # 打印前几行数据用于调试
+            if not df.empty:
+                logging.info(f"First row data: {df.iloc[0].to_dict()}")
+            
             return df
         except Exception as e:
-            logging.error(f"Error reading CSV with comma separator: {str(e)}")
+            logging.error(f"Error reading CSV with semicolon separator: {str(e)}")
             # 最后尝试自动检测分隔符
             try:
                 df = pd.read_csv(
@@ -768,7 +805,7 @@ def read_csv_file(file_path: str) -> pd.DataFrame:
                     engine='python',
                     on_bad_lines='skip'
                 )
-                logging.info(f"Successfully read CSV file with auto-detected separator: {len(df)} rows")
+                logging.info(f"Successfully read CSV file with auto-detected separator: {len(df)} rows and columns: {df.columns.tolist()}")
                 return df
             except Exception as e:
                 logging.error(f"Error reading CSV with auto-detected separator: {str(e)}")
@@ -820,57 +857,170 @@ def analyze_file(file_path: str) -> Dict:
             # 创建基础行信息
             base_row = {
                 'Review_ID': row.get('Review_ID', index + 1),
-                'Title': extract_title(cleaned_text),
-                'Content': cleaned_text,
-                'Overall_Sentiment': sentiment_result['sentiment'],
-                'Overall_Score': f"{sentiment_result['score']:.2f}",
-                'Overall_Polarity': f"{sentiment_result['polarity']:.2f}",
-                'Overall_Confidence': f"{sentiment_result['confidence']:.2f}",
-                'Overall_Reason': sentiment_result['reason']
+                'Title': safe_string(extract_title(cleaned_text), "No Title"),
+                'Content': safe_string(cleaned_text, "No Content"),
+                'Overall_Sentiment': safe_string(sentiment_result.get('sentiment'), 'neutral'),
+                'Overall_Score': f"{float(sentiment_result.get('score', 0.5)):.2f}",
+                'Overall_Polarity': f"{float(sentiment_result.get('polarity', 0.0)):.2f}",
+                'Overall_Confidence': f"{float(sentiment_result.get('confidence', 0.5)):.2f}",
+                'Overall_Reason': safe_string(sentiment_result.get('reason'), 'No reason available')
             }
             
             # 添加每个方面的详细信息
             if sentiment_result.get('aspects'):
                 for i, aspect in enumerate(sentiment_result['aspects'], 1):
-                    base_row[f'Aspect_{i}'] = aspect['aspect']
-                    base_row[f'Aspect_{i}_Sentiment'] = aspect['sentiment']
-                    base_row[f'Aspect_{i}_Confidence'] = f"{aspect['confidence']:.2f}"
-                    base_row[f'Aspect_{i}_Reason'] = aspect['reason']
+                    base_row[f'Aspect_{i}'] = safe_string(aspect.get('aspect'), 'general')
+                    base_row[f'Aspect_{i}_Sentiment'] = safe_string(aspect.get('sentiment'), 'neutral')
+                    base_row[f'Aspect_{i}_Confidence'] = f"{float(aspect.get('confidence', 0.5)):.2f}"
+                    base_row[f'Aspect_{i}_Reason'] = safe_string(aspect.get('reason'), 'No reason available')
             
             result_rows.append(base_row)
             
-            # 添加到结果列表
+            # 添加到结果列表（确保所有数据都是安全的）
+            result_sentiment = safe_string(sentiment_result.get('sentiment'), 'neutral')
+            result_reason = safe_string(sentiment_result.get('reason'), 'No reason available')
+            
+            # 确保字符串字段有有效内容
+            if not result_sentiment or result_sentiment.strip() == '':
+                result_sentiment = 'neutral'
+            if not result_reason or result_reason.strip() == '':
+                result_reason = 'No reason available'
+            
+            # 处理aspects数组，确保每个aspect都有有效的字符串字段
+            safe_aspects = []
+            for aspect in sentiment_result.get('aspects', []):
+                if isinstance(aspect, dict):
+                    aspect_name = safe_string(aspect.get('aspect'), 'general')
+                    aspect_sentiment = safe_string(aspect.get('sentiment'), 'neutral')
+                    aspect_reason = safe_string(aspect.get('reason'), 'No reason available')
+                    
+                    if not aspect_name or aspect_name.strip() == '':
+                        aspect_name = 'general'
+                    if not aspect_sentiment or aspect_sentiment.strip() == '':
+                        aspect_sentiment = 'neutral'
+                    if not aspect_reason or aspect_reason.strip() == '':
+                        aspect_reason = 'No reason available'
+                    
+                    safe_aspects.append({
+                        'aspect': aspect_name,
+                        'sentiment': aspect_sentiment,
+                        'confidence': float(aspect.get('confidence', 0.5)),
+                        'reason': aspect_reason
+                    })
+            
             results.append({
-                'sentiment': sentiment_result['sentiment'],
-                'score': sentiment_result['score'],
-                'polarity': sentiment_result['polarity'],
-                'confidence': sentiment_result['confidence'],
-                'reason': sentiment_result['reason'],
-                'aspects': sentiment_result['aspects']
+                'sentiment': result_sentiment,
+                'score': float(sentiment_result.get('score', 0.5)),
+                'polarity': float(sentiment_result.get('polarity', 0.0)),
+                'confidence': float(sentiment_result.get('confidence', 0.5)),
+                'reason': result_reason,
+                'aspects': safe_aspects
             })
             
-            # 保存原始文本
-            original_texts.append(cleaned_text)
+            # 保存原始文本（只保存实际的文本内容，并限制长度以避免前端渲染问题）
+            original_text = safe_string(text, "No content available").strip()
+            # 确保文本不为空
+            if not original_text:
+                original_text = "No content available"
+            # 如果文本太长，截取前500个字符并添加省略号
+            if len(original_text) > 500:
+                original_text = original_text[:500] + "..."
+            original_texts.append(original_text)
         
-        # 创建结果DataFrame
+        # 创建结果DataFrame（宽格式，用于详细分析）
         result_df = pd.DataFrame(result_rows)
         
         # 生成输出文件名
         output_file = f"transformer_analysis_{int(time.time())}.csv"
         output_path = os.path.join("output", output_file)
         
-        # 保存结果到CSV
+        # 保存宽格式结果到CSV
         result_df.to_csv(output_path, index=False, encoding='utf-8')
+        
+        # 创建前端期望的长格式CSV（每一行代表一个方面分析）
+        long_format_rows = []
+        for result_row in result_rows:
+            review_id = result_row['Review_ID']
+            content = result_row['Content']
+            
+            # 查找该行的所有方面分析
+            aspect_index = 1
+            while f'Aspect_{aspect_index}' in result_row:
+                aspect_name = result_row.get(f'Aspect_{aspect_index}', '')
+                aspect_sentiment = result_row.get(f'Aspect_{aspect_index}_Sentiment', '')
+                aspect_confidence = result_row.get(f'Aspect_{aspect_index}_Confidence', '')
+                aspect_reason = result_row.get(f'Aspect_{aspect_index}_Reason', '')
+                
+                # 只添加有效的方面分析
+                if aspect_name and aspect_sentiment:
+                    long_format_rows.append({
+                        'Review_ID': review_id,
+                        'Content': content,
+                        'Aspect': aspect_name,
+                        'Sentiment': aspect_sentiment,
+                        'Confidence': aspect_confidence,
+                        'Reason': aspect_reason
+                    })
+                
+                aspect_index += 1
+        
+        # 如果有长格式数据，保存为额外的CSV文件
+        if long_format_rows:
+            long_format_df = pd.DataFrame(long_format_rows)
+            long_format_file = f"transformer_analysis_long_{int(time.time())}.csv"
+            long_format_path = os.path.join("output", long_format_file)
+            long_format_df.to_csv(long_format_path, index=False, encoding='utf-8')
+            
+            # 将长格式文件名作为主要输出文件（前端会下载这个）
+            output_file = long_format_file
+        
+        # 构建aspect_details列表（前端需要这个字段）
+        aspect_details = []
+        for result in results:
+            if result.get('aspects'):
+                for aspect in result['aspects']:
+                    # 确保所有数值都是有效的浮点数
+                    confidence = aspect.get('confidence', 0.5)
+                    if not isinstance(confidence, (int, float)) or confidence < 0 or confidence > 1:
+                        confidence = 0.5
+                    
+                    # 确保所有字段都是有效的字符串和数值
+                    aspect_name = safe_string(aspect.get('aspect'), 'general')
+                    aspect_sentiment = safe_string(aspect.get('sentiment'), 'neutral')
+                    aspect_reason = safe_string(aspect.get('reason'), 'No reason available')
+                    
+                    # 确保字符串不为空且有有效内容
+                    if not aspect_name or aspect_name.strip() == '':
+                        aspect_name = 'general'
+                    if not aspect_sentiment or aspect_sentiment.strip() == '':
+                        aspect_sentiment = 'neutral'
+                    if not aspect_reason or aspect_reason.strip() == '':
+                        aspect_reason = 'No reason available'
+                    
+                    aspect_details.append({
+                        'aspect': aspect_name,
+                        'sentiment': aspect_sentiment,
+                        'confidence': float(confidence),
+                        'reason': aspect_reason
+                    })
         
         # 构建响应数据
         response_data = {
             'total_rows': len(results),
-            'analyzed_column': text_column,
+            'analyzed_column': safe_string(text_column, 'Content'),
             'results': results,
             'summary': sentiment_stats,
-            'output_file': output_file,
+            'aspect_details': aspect_details,  # 添加aspect_details字段
+            'output_file': safe_string(output_file, ''),
             'original_texts': original_texts
         }
+        
+        # 验证响应数据的完整性
+        response_data = validate_response_data(response_data)
+        
+        # 添加调试日志
+        logger.info(f"Analysis completed: {len(results)} results, {len(aspect_details)} aspect details, {len(original_texts)} original texts")
+        logger.info(f"Response data keys: {list(response_data.keys())}")
         
         return response_data
         
@@ -878,16 +1028,109 @@ def analyze_file(file_path: str) -> Dict:
         logger.error(f"File analysis error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"File analysis failed: {str(e)}")
 
+def validate_response_data(data: Dict) -> Dict:
+    """
+    验证和清理响应数据，确保所有字符串字段都是有效的
+    """
+    try:
+        # 验证顶级字段
+        data['total_rows'] = int(data.get('total_rows', 0))
+        data['analyzed_column'] = safe_string(data.get('analyzed_column'), 'Content')
+        data['output_file'] = safe_string(data.get('output_file'), '')
+        
+        # 验证summary
+        if not isinstance(data.get('summary'), dict):
+            data['summary'] = {'positive': 0, 'negative': 0, 'neutral': 0}
+        
+        # 验证results数组
+        if not isinstance(data.get('results'), list):
+            data['results'] = []
+        else:
+            validated_results = []
+            for result in data['results']:
+                if isinstance(result, dict):
+                    validated_result = {
+                        'sentiment': safe_string(result.get('sentiment'), 'neutral'),
+                        'score': float(result.get('score', 0.5)),
+                        'polarity': float(result.get('polarity', 0.0)),
+                        'confidence': float(result.get('confidence', 0.5)),
+                        'reason': safe_string(result.get('reason'), 'No reason available'),
+                        'aspects': []
+                    }
+                    
+                    # 验证aspects
+                    if isinstance(result.get('aspects'), list):
+                        for aspect in result['aspects']:
+                            if isinstance(aspect, dict):
+                                validated_result['aspects'].append({
+                                    'aspect': safe_string(aspect.get('aspect'), 'general'),
+                                    'sentiment': safe_string(aspect.get('sentiment'), 'neutral'),
+                                    'confidence': float(aspect.get('confidence', 0.5)),
+                                    'reason': safe_string(aspect.get('reason'), 'No reason available')
+                                })
+                    
+                    validated_results.append(validated_result)
+            data['results'] = validated_results
+        
+        # 验证aspect_details数组
+        if not isinstance(data.get('aspect_details'), list):
+            data['aspect_details'] = []
+        else:
+            validated_aspect_details = []
+            for detail in data['aspect_details']:
+                if isinstance(detail, dict):
+                    validated_aspect_details.append({
+                        'aspect': safe_string(detail.get('aspect'), 'general'),
+                        'sentiment': safe_string(detail.get('sentiment'), 'neutral'),
+                        'confidence': float(detail.get('confidence', 0.5)),
+                        'reason': safe_string(detail.get('reason'), 'No reason available')
+                    })
+            data['aspect_details'] = validated_aspect_details
+        
+        # 验证original_texts数组
+        if not isinstance(data.get('original_texts'), list):
+            data['original_texts'] = []
+        else:
+            validated_texts = []
+            for text in data['original_texts']:
+                validated_texts.append(safe_string(text, 'No content available'))
+            data['original_texts'] = validated_texts
+        
+        return data
+    except Exception as e:
+        logger.error(f"Error validating response data: {str(e)}")
+        # 返回最小安全的响应结构
+        return {
+            'total_rows': 0,
+            'analyzed_column': 'Content',
+            'results': [],
+            'summary': {'positive': 0, 'negative': 0, 'neutral': 0},
+            'aspect_details': [],
+            'output_file': '',
+            'original_texts': []
+        }
+
 def detect_text_column(df: pd.DataFrame) -> Optional[str]:
     """检测文本列"""
-    for col in df.columns:
-        if 'text' in col.lower() or 'content' in col.lower() or 'comment' in col.lower():
-            return col
-    return df.columns[0] if not df.empty else None
+    if df.empty:
+        return None
+    
+    # 优先查找常见的文本列名
+    priority_keywords = ['content', 'text', 'comment', 'review', 'message', 'description']
+    for keyword in priority_keywords:
+        for col in df.columns:
+            if keyword in col.lower():
+                logging.info(f"Detected text column: {col}")
+                return col
+    
+    # 如果没有找到，返回最后一列（通常是内容列）
+    text_col = df.columns[-1]
+    logging.info(f"No specific text column found, using last column: {text_col}")
+    return text_col
 
 # 确保输出目录存在
 OUTPUT_DIR = "output"
-os.makedirs(OUTPUT_DIR, exist_ok=True)
+os.makedirs(OUTPUT_DIR, exist_ok=True) 
 
 def get_relevant_sentences(text: str, aspect: str) -> List[str]:
     """
