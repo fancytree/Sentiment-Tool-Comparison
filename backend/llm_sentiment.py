@@ -500,6 +500,25 @@ async def download_file(filename: str):
         raise HTTPException(status_code=404, detail="File not found")
     return FileResponse(file_path, filename=filename)
 
+def detect_language(text: str) -> str:
+    """
+    检测文本语言（简单版本）
+    """
+    # 统计中文字符数量
+    chinese_chars = sum(1 for char in text if '\u4e00' <= char <= '\u9fff')
+    # 统计英文单词数量（简单估算）
+    english_words = len([word for word in text.split() if word.isalpha() and all(ord(char) < 128 for char in word)])
+    
+    # 如果中文字符占比较高，判断为中文
+    if chinese_chars > len(text) * 0.1:
+        return 'zh'
+    # 如果有英文单词且中文字符很少，判断为英文
+    elif english_words > 0 and chinese_chars < len(text) * 0.05:
+        return 'en'
+    # 默认根据中文字符数量决定
+    else:
+        return 'zh' if chinese_chars > 0 else 'en'
+
 def is_sentiment_related_question(message: str) -> bool:
     """
     检查用户问题是否与情感分析相关
@@ -554,15 +573,25 @@ def generate_chat_response(message: str, analysis_data: Optional[Dict] = None, c
     生成基于情感分析的对话回复，支持aspect总结和片段列举
     """
     try:
+        # 检测用户输入的语言
+        user_language = detect_language(message)
+        
         # 检查是否为情感分析相关问题
         if not is_sentiment_related_question(message):
+            # 根据用户语言返回对应的回复
+            if user_language == 'zh':
+                not_related_message = "抱歉，我只能提供与情感分析相关的见解和分析。请询问关于情感、观点、评论或情感分析相关的问题！"
+            else:
+                not_related_message = "Sorry, I can only provide insights and analysis related to sentiment analysis. Please ask questions about sentiments, opinions, reviews, or sentiment analysis!"
+            
             return {
-                "message": "抱歉，我只能提供与情感分析相关的见解和分析。请询问关于情感、观点、评论或情感分析相关的问题！",
+                "message": not_related_message,
                 "is_sentiment_related": False
             }
         
-        # 构建增强的系统提示
-        system_prompt = """你是一个专业的情感分析助手，具备以下能力：
+        # 根据用户语言构建系统提示
+        if user_language == 'zh':
+            system_prompt = """你是一个专业的情感分析助手，具备以下能力：
 
 1. **情感分析**: 分析文本的情感倾向、强度和极性
 2. **方面分析**: 针对特定方面(aspect)进行深入分析
@@ -574,7 +603,7 @@ def generate_chat_response(message: str, analysis_data: Optional[Dict] = None, c
 - 只回答与情感分析、情绪、观点、评论相关的问题
 - 如果用户询问无关话题，请礼貌地引导回到情感分析相关内容
 - 基于提供的分析数据回答问题，如果没有数据则提供一般性指导
-- 支持中英文双语交流
+- 用中文回答用户的问题
 - 回答要准确、有用，重点关注情感相关洞察
 
 **特殊功能**:
@@ -582,12 +611,34 @@ def generate_chat_response(message: str, analysis_data: Optional[Dict] = None, c
 - 当用户要求列举片段时，从分析数据中提取相关的文本内容
 - 支持按情感极性(正面/负面/中性)筛选内容
 - 支持按特定关键词或主题筛选相关评论"""
+        else:
+            system_prompt = """You are a professional sentiment analysis assistant with the following capabilities:
+
+1. **Sentiment Analysis**: Analyze text sentiment tendencies, intensity, and polarity
+2. **Aspect Analysis**: Conduct in-depth analysis on specific aspects
+3. **Content Summarization**: Provide summaries and statistics of sentiment analysis results
+4. **Segment Listing**: List relevant text segments as requested
+5. **Trend Analysis**: Analyze sentiment distribution and change trends
+
+**Important Rules**:
+- Only answer questions related to sentiment analysis, emotions, opinions, and reviews
+- If users ask unrelated questions, politely guide them back to sentiment analysis content
+- Base answers on provided analysis data, or provide general guidance if no data is available
+- Answer user questions in English
+- Answers should be accurate, useful, and focus on sentiment-related insights
+
+**Special Features**:
+- When users request summaries of specific aspects, provide sentiment distribution, key issues, and improvement suggestions for those aspects
+- When users request segment listings, extract relevant text content from analysis data
+- Support filtering content by sentiment polarity (positive/negative/neutral)
+- Support filtering relevant comments by specific keywords or themes"""
         
         # 构建用户提示，包含分析数据
         user_prompt = message
         if analysis_data:
-            # 构建更详细的数据描述
-            data_description = f"""
+            # 根据用户语言构建数据描述
+            if user_language == 'zh':
+                data_description = f"""
 基于以下情感分析结果回答用户问题：
 
 **数据概览**:
@@ -605,6 +656,25 @@ def generate_chat_response(message: str, analysis_data: Optional[Dict] = None, c
 **用户问题**: {message}
 
 请根据用户的具体需求，提供相应的分析、总结或建议。如果用户询问特定方面(如"Game Balance")，请重点分析该方面的情感分布和主要问题。"""
+            else:
+                data_description = f"""
+Answer the user's question based on the following sentiment analysis results:
+
+**Data Overview**:
+- Total analyzed entries: {analysis_data.get('total_rows', 'N/A')}
+- Analyzed column: {analysis_data.get('analyzed_column', 'N/A')}
+- Sentiment distribution: 
+  * Positive: {analysis_data.get('summary', {}).get('positive', 0)} entries
+  * Negative: {analysis_data.get('summary', {}).get('negative', 0)} entries  
+  * Neutral: {analysis_data.get('summary', {}).get('neutral', 0)} entries
+
+**Data Details**: 
+If the user asks about specific content, segments, or cases, please provide analysis and suggestions based on these statistics.
+If the user requests specific negative/positive comment segments, please explain the situation based on current data and provide typical issue types that might be included in that category.
+
+**User Question**: {message}
+
+Please provide appropriate analysis, summaries, or suggestions based on the user's specific needs. If the user asks about specific aspects (like "Game Balance"), please focus on analyzing the sentiment distribution and main issues for that aspect."""
             user_prompt = data_description
         
         if context:
@@ -630,8 +700,15 @@ def generate_chat_response(message: str, analysis_data: Optional[Dict] = None, c
         
     except Exception as e:
         logging.error(f"Chat response generation failed: {str(e)}")
+        # 检测用户语言以返回对应的错误信息
+        user_language = detect_language(message)
+        if user_language == 'zh':
+            error_message = "抱歉，在处理您的问题时遇到了错误，请重试。如果您有情感分析相关的问题，我很乐意为您提供帮助。"
+        else:
+            error_message = "Sorry, an error occurred while processing your question. Please try again. If you have sentiment analysis related questions, I'd be happy to help."
+        
         return {
-            "message": "抱歉，在处理您的问题时遇到了错误，请重试。如果您有情感分析相关的问题，我很乐意为您提供帮助。",
+            "message": error_message,
             "is_sentiment_related": True
         }
 
@@ -653,7 +730,13 @@ async def chat_with_sentiment_assistant(request: ChatRequest) -> ChatResponse:
         )
     except Exception as e:
         logging.error(f"Chat API failed: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        # 检测用户语言以返回对应的错误信息
+        user_language = detect_language(request.message)
+        if user_language == 'zh':
+            error_detail = f"聊天API出错: {str(e)}"
+        else:
+            error_detail = f"Chat API error: {str(e)}"
+        raise HTTPException(status_code=500, detail=error_detail)
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8001) 

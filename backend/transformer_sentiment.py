@@ -699,7 +699,7 @@ async def health_check():
         return {
             "status": "error",
             "error": str(e)
-        } 
+        }
 
 def clean_text(text):
     """
@@ -864,8 +864,8 @@ def analyze_file(file_path: str) -> Dict:
                 'Overall_Polarity': f"{float(sentiment_result.get('polarity', 0.0)):.2f}",
                 'Overall_Confidence': f"{float(sentiment_result.get('confidence', 0.5)):.2f}",
                 'Overall_Reason': safe_string(sentiment_result.get('reason'), 'No reason available')
-            }
-            
+                    }
+                
             # 添加每个方面的详细信息
             if sentiment_result.get('aspects'):
                 for i, aspect in enumerate(sentiment_result['aspects'], 1):
@@ -879,7 +879,7 @@ def analyze_file(file_path: str) -> Dict:
             # 添加到结果列表（确保所有数据都是安全的）
             result_sentiment = safe_string(sentiment_result.get('sentiment'), 'neutral')
             result_reason = safe_string(sentiment_result.get('reason'), 'No reason available')
-            
+                
             # 确保字符串字段有有效内容
             if not result_sentiment or result_sentiment.strip() == '':
                 result_sentiment = 'neutral'
@@ -1130,7 +1130,7 @@ def detect_text_column(df: pd.DataFrame) -> Optional[str]:
 
 # 确保输出目录存在
 OUTPUT_DIR = "output"
-os.makedirs(OUTPUT_DIR, exist_ok=True) 
+os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 def get_relevant_sentences(text: str, aspect: str) -> List[str]:
     """
