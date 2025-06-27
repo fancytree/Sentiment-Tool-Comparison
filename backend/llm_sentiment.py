@@ -59,7 +59,9 @@ class AspectAnalysis(BaseModel):
     reason: str
 
 class AnalysisResult(BaseModel):
+    aspect: str
     sentiment: str
+    intensity: float
     score: float
     polarity: float
     brief_analysis: str
@@ -160,19 +162,21 @@ def build_prompt(text: str) -> str:
     """
     return f"""Please analyze the following game review and respond in the following format:
 
-Overall Sentiment: [Positive/Neutral/Negative]
-Overall Intensity: [Number]
-- Positive sentiment: 1 to 5 (1=slightly positive, 5=extremely positive)
-- Negative sentiment: -1 to -5 (-1=slightly negative, -5=extremely negative)
-- Neutral sentiment: 0
+Main Aspect: [The most prominent aspect mentioned in the review from: Gameplay, Graphics, Sound, Story, Performance, UI/UX, Game Balance, Monetization, Community, Overall Experience]
+Aspect Sentiment: [Positive/Neutral/Negative]
+Intensity: [Number]
+- Positive sentiment: 1.0 to 5.0 (1.0=slightly positive, 5.0=extremely positive)
+- Negative sentiment: -1.0 to -5.0 (-1.0=slightly negative, -5.0=extremely negative)  
+- Neutral sentiment: 0.0
 
-Brief Analysis: [Provide a concise analysis in 30 words or less, focusing on the main points of the review]
+Brief Analysis: [Provide a concise analysis in 30 words or less, focusing on the main aspect and overall sentiment]
 
 Important Guidelines:
-1. Keep the brief analysis under 30 words
-2. Focus on the most important aspects mentioned in the review
-3. Ensure intensity values match the sentiment (positive numbers for positive, negative for negative)
-4. Intensity values must be non-zero and include one decimal place
+1. Choose the MOST PROMINENT aspect from the predefined list
+2. If multiple aspects are mentioned, pick the one with strongest sentiment expression
+3. Keep the brief analysis under 30 words
+4. Ensure intensity values match the sentiment (positive numbers for positive, negative for negative)
+5. Use decimal format (e.g., 2.5, -3.0)
 
 Review Content: "{text}"
 
@@ -215,16 +219,19 @@ def analyze_sentiment(text: str, max_retries: int = 3) -> Dict:
                 logging.info(f"\nAPI Response:\n{response_text}\n")
                 
                 lines = response_text.split('\n')
-                overall_sentiment = "unknown"
-                overall_intensity = 0
+                main_aspect = "Overall Experience"
+                aspect_sentiment = "unknown"
+                intensity = 0.0
                 brief_analysis = ""
                 
                 for line in lines:
-                    if "Overall Sentiment:" in line:
-                        overall_sentiment = line.split(':', 1)[1].strip()
-                    elif "Overall Intensity:" in line:
+                    if "Main Aspect:" in line:
+                        main_aspect = line.split(':', 1)[1].strip()
+                    elif "Aspect Sentiment:" in line:
+                        aspect_sentiment = line.split(':', 1)[1].strip()
+                    elif "Intensity:" in line:
                         try:
-                            overall_intensity = float(line.split(':', 1)[1].strip())
+                            intensity = float(line.split(':', 1)[1].strip())
                         except (ValueError, IndexError):
                             pass
                     elif "Brief Analysis:" in line:
@@ -232,15 +239,17 @@ def analyze_sentiment(text: str, max_retries: int = 3) -> Dict:
                 
                 # 计算情感得分和极性
                 sentiment_score = 0
-                if overall_sentiment.lower() == "positive":
+                if aspect_sentiment.lower() == "positive":
                     sentiment_score = 100
-                elif overall_sentiment.lower() == "negative":
+                elif aspect_sentiment.lower() == "negative":
                     sentiment_score = -100
                 
-                polarity = overall_intensity
+                polarity = intensity
                 
                 return {
-                    "sentiment": overall_sentiment.lower(),
+                    "aspect": main_aspect,
+                    "sentiment": aspect_sentiment.lower(),
+                    "intensity": intensity,
                     "score": abs(sentiment_score),
                     "polarity": polarity,
                     "brief_analysis": brief_analysis
@@ -256,7 +265,9 @@ def analyze_sentiment(text: str, max_retries: int = 3) -> Dict:
     except Exception as e:
         logging.error(f"Analysis failed: {str(e)}")
         return {
+            "aspect": "Overall Experience",
             "sentiment": "unknown",
+            "intensity": 0.0,
             "score": 0,
             "polarity": 0,
             "brief_analysis": f"Analysis failed: {str(e)}"
@@ -417,12 +428,15 @@ async def analyze_file(file: UploadFile = File(...)) -> TableAnalysisResult:
                 raise ValueError(f"数据长度不匹配: df={len(results_df)}, results={len(results)}")
             
             # 添加分析结果列
+            
+            results_df['aspect'] = [r['aspect'] for r in results]
             results_df['sentiment'] = [r['sentiment'] for r in results]
-            results_df['强度'] = [r['polarity'] for r in results]
+            results_df['intensity'] = [r['intensity'] for r in results]
             results_df['reason'] = [r['brief_analysis'] for r in results]
+
             
             # 去掉Title列，只保留需要的列
-            columns_to_keep = ['Review_ID', 'Content', 'sentiment', '强度', 'reason']
+            columns_to_keep = ['Review_ID', 'Content', 'aspect', 'sentiment', 'intensity', 'reason']
             # 检查哪些列存在于DataFrame中
             existing_columns = [col for col in columns_to_keep if col in results_df.columns]
             results_df = results_df[existing_columns]

@@ -51,9 +51,12 @@ const styles = `
 `;
 
 interface AnalysisResult {
+  aspect: string;
   sentiment: string;
+  intensity: number;
   score: number;
   polarity: number;
+  brief_analysis: string;
 }
 
 interface AspectSentiment {
@@ -67,7 +70,7 @@ interface AspectSentiment {
 interface AspectAnalysisResult {
   aspect: string;
   sentiment: string;
-  confidence: number;
+  intensity: number;
   reason: string;
 }
 
@@ -412,7 +415,8 @@ export default function LLMSentiment() {
       return (
         <div style={{ color: 'black', fontSize: '12px', fontFamily: 'Inter', fontWeight: 400 }}>
           Analysis Result: {result.sentiment === 'positive' ? 'Positive' : result.sentiment === 'negative' ? 'Negative' : 'Neutral'}<br/>
-          Confidence: {result.score}%<br/>
+                      Aspect: {result.aspect}<br/>
+            Intensity: {result.intensity}<br/>
           Polarity: {result.polarity}
         </div>
       );
@@ -426,7 +430,7 @@ export default function LLMSentiment() {
         AspectAnalyses: Array<{
           Aspect: string;
           Sentiment: string;
-          Confidence: number;
+          Intensity: number;
           Reason: string;
         }>;
       }
@@ -459,7 +463,7 @@ export default function LLMSentiment() {
             contentMap[i + 1].aspects.push({
               Aspect: detail.aspect,
               Sentiment: detail.sentiment,
-              Confidence: detail.confidence,
+              Intensity: detail.intensity,
               Reason: detail.reason
             });
           }
@@ -473,7 +477,7 @@ export default function LLMSentiment() {
             AspectAnalyses: data.aspects.length > 0 ? data.aspects : [{
               Aspect: "General Content",
               Sentiment: "neutral",
-              Confidence: 100,
+              Intensity: 0.0,
               Reason: "No specific aspects detected in this content."
             }]
           });
@@ -581,8 +585,9 @@ export default function LLMSentiment() {
                         width: header === 'Content' ? '400px' : 
                                header === 'reason' ? '250px' :
                                header === 'Review_ID' ? '80px' :
+                               header === 'aspect' ? '120px' :
                                header === 'sentiment' ? '100px' :
-                               header === '强度' ? '80px' : 'auto'
+                               header === 'intensity' ? '80px' : 'auto'
                       }}>
                         {header}
                       </th>
@@ -592,7 +597,7 @@ export default function LLMSentiment() {
                         <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #E5E7EB', width: '400px' }}>Content</th>
                         <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #E5E7EB', width: '100px' }}>Aspect</th>
                         <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #E5E7EB', width: '90px' }}>Sentiment</th>
-                        <th style={{ padding: '12px', textAlign: 'center', borderBottom: '1px solid #E5E7EB', width: '90px' }}>Confidence</th>
+                        <th style={{ padding: '12px', textAlign: 'center', borderBottom: '1px solid #E5E7EB', width: '90px' }}>Intensity</th>
                         <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #E5E7EB' }}>Reason</th>
                       </>
                     )}
@@ -692,7 +697,7 @@ export default function LLMSentiment() {
                                 color: header === 'sentiment' ? 
                                   (row[header] === 'positive' ? '#4CAF50' : 
                                    row[header] === 'negative' ? '#F44336' : '#9E9E9E') : 'inherit',
-                                fontWeight: header === 'sentiment' || header === '强度' ? 500 : 'normal'
+                                fontWeight: header === 'sentiment' || header === 'intensity' ? 500 : 'normal'
                               }}>
                                 {row[header]}
                               </td>
@@ -777,7 +782,7 @@ export default function LLMSentiment() {
                                 {aspect.Sentiment.charAt(0).toUpperCase() + aspect.Sentiment.slice(1)}
                               </td>
                               <td style={{ padding: '12px', textAlign: 'center' }}>
-                                {`${aspect.Confidence}%`}
+                                {aspect.Intensity}
                               </td>
                               <td style={{ padding: '12px' }}>
                                 {aspect.Reason}
