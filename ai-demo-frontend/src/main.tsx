@@ -99,7 +99,7 @@ function HeroSection() {
           lineHeight: '64px',
           wordWrap: 'break-word'
         }}>
-          AI Demo Showcase Platform
+          AI Sentiment Tool Comparison Platform
         </div>
       </div>
     </div>
@@ -244,7 +244,7 @@ function DemoSection({ children }: { children: React.ReactNode }) {
           fontWeight: 274,
           wordWrap: 'break-word'
         }}>
-          This is my personal AI demo hub — lightweight, interactive. Try out each demo below.
+          This is a sentiment tool comparison platform  — lightweight, interactive. Try out each tool below.
         </div>
         <div style={{ 
           alignSelf: 'stretch',
