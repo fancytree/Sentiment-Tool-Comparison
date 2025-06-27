@@ -122,6 +122,7 @@ export default function GeneralAnalysis() {
       };
       
       setTextResult(result);
+      setText(''); // 清空输入框
       showToast('Analysis completed', 'success');
     } catch (error) {
       console.error('分析出错:', error);
@@ -678,7 +679,7 @@ export default function GeneralAnalysis() {
                       fontFamily: 'SF Pro',
                       fontWeight: 400,
                       lineHeight: '24px',
-                      color: 'rgba(0, 5, 29, 0.45)'
+                      color: '#000000'
                     }}
                     onKeyPress={(e) => {
                       if (e.key === 'Enter') {

@@ -157,6 +157,7 @@ export default function LLMSentiment() {
       const data = await response.json();
       setResult(data);
       setTableResult(null);
+      setText(''); // 清空输入框
       showToast('Analysis completed', 'success');
     } catch (error) {
       showToast('Analysis failed, please try again', 'error');
@@ -974,7 +975,7 @@ export default function LLMSentiment() {
                       fontFamily: 'SF Pro',
                       fontWeight: 400,
                       lineHeight: '24px',
-                      color: 'rgba(0, 5, 29, 0.45)'
+                      color: '#000000'
                     }}
                     onKeyPress={(e) => {
                       if (e.key === 'Enter') {
