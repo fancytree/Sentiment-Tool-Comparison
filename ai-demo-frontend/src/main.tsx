@@ -59,7 +59,7 @@ function TopBar() {
           lineHeight: '24px',
           wordWrap: 'break-word'
         }}>
-          Contact
+          <a href="mailto:flyskytoo@outlook.com" style={{color: 'white', textDecoration: 'none'}}>Contact</a>
         </div>
       </div>
     </Flex>
