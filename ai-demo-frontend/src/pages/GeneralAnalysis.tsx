@@ -6,6 +6,7 @@ import backIcon from '../assets/icons/back.svg';
 import avatarIcon from '../assets/icons/Avatar.png';
 import sendIcon from '../assets/icons/Send.svg';
 import paperclipIcon from '../assets/icons/Paperclip.svg';
+import { API_ENDPOINTS, DEFAULT_FETCH_OPTIONS } from '../config/api';
 
 // Add custom styles
 const styles = `
@@ -98,13 +99,9 @@ export default function GeneralAnalysis() {
     
     try {
       // 使用general API端点
-      const response = await fetch('http://localhost:8001/api/general/analyze', {
+      const response = await fetch(API_ENDPOINTS.GENERAL_ANALYZE, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'Origin': 'http://localhost:5173'
-        },
+        ...DEFAULT_FETCH_OPTIONS,
         body: JSON.stringify({ text: text.trim() }),
       });
 
@@ -125,6 +122,7 @@ export default function GeneralAnalysis() {
       };
       
       setTextResult(result);
+      setText(''); // 清空输入框
       showToast('Analysis completed', 'success');
     } catch (error) {
       console.error('分析出错:', error);
@@ -162,11 +160,10 @@ export default function GeneralAnalysis() {
 
     try {
       console.log('Uploading file to general API...');
-      const response = await fetch('http://localhost:8001/api/general/upload', {
+      const response = await fetch(API_ENDPOINTS.GENERAL_UPLOAD, {
         method: 'POST',
         headers: {
           'Accept': 'application/json',
-          'Origin': 'http://localhost:5173'
         },
         body: formData,
       });
@@ -485,7 +482,9 @@ export default function GeneralAnalysis() {
           {fileResult.outputFile && (
             <button
               onClick={() => {
-                window.open(`http://localhost:8001/api/general/download/${fileResult.outputFile}`, '_blank');
+                  if (fileResult.outputFile) {
+                    window.open(API_ENDPOINTS.GENERAL_DOWNLOAD(fileResult.outputFile), '_blank');
+                  }
               }}
               style={{
                 padding: '8px 16px',
@@ -680,7 +679,7 @@ export default function GeneralAnalysis() {
                       fontFamily: 'SF Pro',
                       fontWeight: 400,
                       lineHeight: '24px',
-                      color: 'rgba(0, 5, 29, 0.45)'
+                      color: '#000000'
                     }}
                     onKeyPress={(e) => {
                       if (e.key === 'Enter') {

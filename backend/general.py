@@ -19,6 +19,20 @@ app = APIRouter()
 # 确保输出目录存在
 os.makedirs("output", exist_ok=True)
 
+# 定义请求和响应模型
+from pydantic import BaseModel
+
+class TextAnalyzeRequest(BaseModel):
+    text: str
+
+class TextAnalyzeResponse(BaseModel):
+    summary: str
+    entities: List[Dict[str, Any]]
+    keywords: List[Dict[str, Any]]
+    sentiment: str
+    score: float
+    polarity: float
+
 def clean_text(text: str) -> str:
     """
     清理文本，移除特殊字符和多余空格
@@ -293,6 +307,82 @@ async def upload_file(file: UploadFile = File(...)):
     except Exception as e:
         logger.error(f"Error processing file: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/analyze")
+async def analyze_text(request: TextAnalyzeRequest) -> TextAnalyzeResponse:
+    """
+    分析单个文本的情感和基本信息
+    """
+    try:
+        text = request.text.strip()
+        if not text:
+            raise HTTPException(status_code=400, detail="Text cannot be empty")
+        
+        # 清理文本
+        cleaned_text = clean_text(text)
+        
+        # 进行情感分析
+        sentiment, score = analyze_sentiment(cleaned_text)
+        
+        # 计算极性值（TextBlob的极性范围是-1到1）
+        polarity = (score - 0.5) * 2  # 将0-1范围转换为-1到1范围
+        
+        # 简单的关键词提取（基于TextBlob）
+        try:
+            from textblob import TextBlob
+            blob = TextBlob(cleaned_text)
+            
+            # 提取名词短语作为关键词
+            keywords = []
+            for phrase in blob.noun_phrases[:5]:  # 取前5个
+                keywords.append({
+                    "text": phrase,
+                    "relevance": min(0.9, len(phrase) / 20)  # 简单的相关性计算
+                })
+        except Exception as e:
+            logger.warning(f"关键词提取失败: {str(e)}")
+            keywords = []
+        
+        # 简单的实体提取（基于常见模式）
+        entities = []
+        try:
+            import re
+            # 简单的邮箱检测
+            emails = re.findall(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', text)
+            for email in emails[:3]:  # 限制数量
+                entities.append({
+                    "text": email,
+                    "type": "EMAIL",
+                    "relevance": 0.8
+                })
+            
+            # 简单的URL检测
+            urls = re.findall(r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+', text)
+            for url in urls[:3]:  # 限制数量
+                entities.append({
+                    "text": url,
+                    "type": "URL",
+                    "relevance": 0.7
+                })
+        except Exception as e:
+            logger.warning(f"实体提取失败: {str(e)}")
+        
+        # 生成简单摘要
+        sentences = cleaned_text.split('.')
+        summary = sentences[0][:100] + "..." if len(sentences[0]) > 100 else sentences[0]
+        
+        return TextAnalyzeResponse(
+            summary=summary,
+            entities=entities,
+            keywords=keywords,
+            sentiment=sentiment,
+            score=score,
+            polarity=polarity
+        )
+        
+    except Exception as e:
+        logger.error(f"文本分析失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Text analysis failed: {str(e)}")
 
 @app.get("/download/{filename}")
 async def download_file(filename: str):

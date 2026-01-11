@@ -12,15 +12,29 @@ app = FastAPI()
 ENV = os.getenv("ENV", "development")
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
 
-# 配置 CORS
+# 配置 CORS - 支持更灵活的域名配置
+allowed_origins = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
+
+# 添加环境变量中的前端 URL
+if FRONTEND_URL:
+    allowed_origins.append(FRONTEND_URL)
+
+# 在生产环境中，允许所有 render.com 的子域名
+if ENV == "production":
+    allowed_origins.extend([
+        "https://*.onrender.com",
+        "https://sentiment-analysis-tool.onrender.com",
+        "https://sentiment-tool-comparison.onrender.com",
+    ])
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        FRONTEND_URL,
-        "https://sentiment-analysis-tool.onrender.com"  # render.com 域名
-    ],
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -56,5 +70,5 @@ if __name__ == "__main__":
         "main:app",
         host="0.0.0.0",
         port=port,
-        workers=4 if ENV == "production" else 1
+        workers=1  # 减少到1个工作进程以节省内存
     ) 

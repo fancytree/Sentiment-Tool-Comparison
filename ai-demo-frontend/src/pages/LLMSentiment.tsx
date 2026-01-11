@@ -6,6 +6,7 @@ import backIcon from '../assets/icons/back.svg';
 import avatarIcon from '../assets/icons/Avatar.png';
 import sendIcon from '../assets/icons/Send.svg';
 import paperclipIcon from '../assets/icons/Paperclip.svg';
+import { API_ENDPOINTS, DEFAULT_FETCH_OPTIONS } from '../config/api';
 
 // CSV解析函数 - 正确处理带引号的字段
 function parseCSVLine(line: string): string[] {
@@ -50,9 +51,12 @@ const styles = `
 `;
 
 interface AnalysisResult {
+  aspect: string;
   sentiment: string;
+  intensity: number;
   score: number;
   polarity: number;
+  brief_analysis: string;
 }
 
 interface AspectSentiment {
@@ -66,7 +70,7 @@ interface AspectSentiment {
 interface AspectAnalysisResult {
   aspect: string;
   sentiment: string;
-  confidence: number;
+  intensity: number;
   reason: string;
 }
 
@@ -140,13 +144,9 @@ export default function LLMSentiment() {
     setTableResult(null);
     
     try {
-      const response = await fetch('http://localhost:8001/api/llm-sentiment/', {
+      const response = await fetch(API_ENDPOINTS.LLM_SENTIMENT, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'Origin': 'http://localhost:5177'
-        },
+        ...DEFAULT_FETCH_OPTIONS,
         body: JSON.stringify({ text: text.trim() }),
       });
 
@@ -157,6 +157,7 @@ export default function LLMSentiment() {
       const data = await response.json();
       setResult(data);
       setTableResult(null);
+      setText(''); // 清空输入框
       showToast('Analysis completed', 'success');
     } catch (error) {
       showToast('Analysis failed, please try again', 'error');
@@ -199,11 +200,10 @@ export default function LLMSentiment() {
       const formData = new FormData();
       formData.append('file', file);
 
-      const response = await fetch('http://localhost:8001/api/llm-sentiment/upload', {
+      const response = await fetch(API_ENDPOINTS.LLM_SENTIMENT_UPLOAD, {
         method: 'POST',
         headers: {
           'Accept': 'application/json',
-          'Origin': 'http://localhost:5177'
         },
         body: formData,
       });
@@ -233,7 +233,7 @@ export default function LLMSentiment() {
       // 下载并解析生成的CSV文件数据用于显示
       try {
         console.log('Downloading CSV file for display:', data.output_file);
-        const csvResponse = await fetch(`http://localhost:8001/api/llm-sentiment/download/${data.output_file}`);
+        const csvResponse = await fetch(API_ENDPOINTS.LLM_SENTIMENT_DOWNLOAD(data.output_file));
         if (csvResponse.ok) {
           const csvText = await csvResponse.text();
           console.log('CSV file downloaded successfully');
@@ -313,13 +313,9 @@ export default function LLMSentiment() {
         analysis_data: analysisData
       };
 
-      const response = await fetch('http://localhost:8001/api/llm-sentiment/chat', {
+      const response = await fetch(API_ENDPOINTS.LLM_SENTIMENT_CHAT, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'Origin': 'http://localhost:5177'
-        },
+        ...DEFAULT_FETCH_OPTIONS,
         body: JSON.stringify(chatRequest),
       });
 
@@ -420,7 +416,8 @@ export default function LLMSentiment() {
       return (
         <div style={{ color: 'black', fontSize: '12px', fontFamily: 'Inter', fontWeight: 400 }}>
           Analysis Result: {result.sentiment === 'positive' ? 'Positive' : result.sentiment === 'negative' ? 'Negative' : 'Neutral'}<br/>
-          Confidence: {result.score}%<br/>
+                      Aspect: {result.aspect}<br/>
+            Intensity: {result.intensity}<br/>
           Polarity: {result.polarity}
         </div>
       );
@@ -434,15 +431,43 @@ export default function LLMSentiment() {
         AspectAnalyses: Array<{
           Aspect: string;
           Sentiment: string;
-          Confidence: number;
+          Intensity: number;
           Reason: string;
         }>;
       }
 
       const directDisplayItems: DirectDisplayItem[] = [];
       
-      // 处理表格数据
-      if (tableResult.original_texts && tableResult.aspect_details) {
+      // 优先使用CSV数据进行合并显示
+      if (tableResult.csvData && tableResult.csvHeaders) {
+        // 将CSV数据按Review_ID分组进行合并显示
+        const groupedData: { [key: number]: DirectDisplayItem } = {};
+        
+        tableResult.csvData.forEach(row => {
+          const reviewId = parseInt(row.Review_ID || '0');
+          
+          if (!groupedData[reviewId]) {
+            groupedData[reviewId] = {
+              Review_ID: reviewId,
+              Content: row.Content || '',
+              AspectAnalyses: []
+            };
+          }
+          
+          // 添加aspect分析
+          groupedData[reviewId].AspectAnalyses.push({
+            Aspect: row.aspect || 'Overall Experience',
+            Sentiment: row.sentiment || 'neutral',
+            Intensity: parseFloat(row.intensity || '0'),
+            Reason: row.reason || ''
+          });
+        });
+        
+        // 转换为数组并排序
+        directDisplayItems.push(...Object.values(groupedData).sort((a, b) => a.Review_ID - b.Review_ID));
+      }
+      // 后备：处理原始数据格式
+      else if (tableResult.original_texts && tableResult.aspect_details) {
         const contentCount = tableResult.original_texts.length;
         const aspectCount = tableResult.aspect_details.length;
         
@@ -467,7 +492,7 @@ export default function LLMSentiment() {
             contentMap[i + 1].aspects.push({
               Aspect: detail.aspect,
               Sentiment: detail.sentiment,
-              Confidence: detail.confidence,
+              Intensity: detail.intensity,
               Reason: detail.reason
             });
           }
@@ -481,7 +506,7 @@ export default function LLMSentiment() {
             AspectAnalyses: data.aspects.length > 0 ? data.aspects : [{
               Aspect: "General Content",
               Sentiment: "neutral",
-              Confidence: 100,
+              Intensity: 0.0,
               Reason: "No specific aspects detected in this content."
             }]
           });
@@ -581,221 +606,104 @@ export default function LLMSentiment() {
                   zIndex: 1
                 }}>
                   <tr>
-                    {tableResult.csvHeaders ? tableResult.csvHeaders.map((header, index) => (
-                      <th key={index} style={{ 
-                        padding: '12px', 
-                        textAlign: 'left', 
-                        borderBottom: '1px solid #E5E7EB',
-                        width: header === 'Content' ? '400px' : 
-                               header === 'reason' ? '250px' :
-                               header === 'Review_ID' ? '80px' :
-                               header === 'sentiment' ? '100px' :
-                               header === '强度' ? '80px' : 'auto'
-                      }}>
-                        {header}
-                      </th>
-                    )) : (
-                      <>
-                        <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #E5E7EB', width: '40px' }}>ID</th>
-                        <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #E5E7EB', width: '400px' }}>Content</th>
-                        <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #E5E7EB', width: '100px' }}>Aspect</th>
-                        <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #E5E7EB', width: '90px' }}>Sentiment</th>
-                        <th style={{ padding: '12px', textAlign: 'center', borderBottom: '1px solid #E5E7EB', width: '90px' }}>Confidence</th>
-                        <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #E5E7EB' }}>Reason</th>
-                      </>
-                    )}
+                    <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #E5E7EB', width: '40px' }}>ID</th>
+                    <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #E5E7EB', width: '400px' }}>Content</th>
+                    <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #E5E7EB', width: '100px' }}>Aspect</th>
+                    <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #E5E7EB', width: '90px' }}>Sentiment</th>
+                    <th style={{ padding: '12px', textAlign: 'center', borderBottom: '1px solid #E5E7EB', width: '90px' }}>Intensity</th>
+                    <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #E5E7EB' }}>Reason</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {tableResult.csvData ? (
-                    // 显示CSV数据
-                    tableResult.csvData.map((row, index) => (
-                      <tr 
-                        key={index}
-                        className="table-row-hover"
-                        style={{ 
-                          background: index % 2 === 0 ? 'white' : '#F9FAFB',
-                          borderBottom: '1px solid #E5E7EB'
-                        }}
-                      >
-                        {tableResult.csvHeaders?.map((header, cellIndex) => {
-                          if (header === 'Review_ID') {
-                            return (
-                              <td key={cellIndex} style={{ 
-                                padding: '12px', 
-                                verticalAlign: 'top',
-                                textAlign: 'center',
-                                fontWeight: 500,
-                                color: '#555',
-                                borderRight: '1px solid #E5E7EB',
-                              }}>
-                                {row[header]}
-                              </td>
-                            );
-                          } else if (header === 'Content') {
-                            return (
-                              <td key={cellIndex} style={{ 
-                                padding: '12px', 
-                                maxWidth: '400px',
-                                width: '400px',
-                                verticalAlign: 'top',
-                                position: 'relative',
-                                borderRight: '1px solid #E5E7EB',
-                              }}>
-                                <div className="custom-scrollbar" style={{
-                                  overflowY: 'auto',
-                                  overflowX: 'auto',
-                                  maxHeight: '250px',
-                                  padding: '12px 15px',
-                                  fontSize: '13px',
-                                  lineHeight: '1.6',
-                                  wordBreak: 'break-word',
-                                  whiteSpace: 'pre-wrap',
-                                  border: '1px solid #eaeaea',
-                                  borderRadius: '4px',
-                                  background: '#fafafa',
-                                  boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.05)',
-                                  fontStyle: row[header] && row[header].startsWith('Row ') ? 'italic' : 'normal',
-                                  color: row[header] && row[header].startsWith('Row ') ? '#888' : 'inherit'
-                                }}>
-                                  {row[header] && row[header].startsWith('Row ') ? 
-                                    `[Default Row ID: ${row[header].substring(4)}]` : 
-                                    row[header]}
-                                </div>
-                              </td>
-                            );
-                          } else if (header === 'reason') {
-                            return (
-                              <td key={cellIndex} style={{ 
-                                padding: '12px', 
-                                maxWidth: '250px',
-                                width: '250px',
-                                verticalAlign: 'top',
-                                position: 'relative',
-                                borderRight: '1px solid #E5E7EB',
-                              }}>
-                                <div className="custom-scrollbar" style={{
-                                  overflowY: 'auto',
-                                  overflowX: 'auto',
-                                  maxHeight: '200px',
-                                  padding: '10px 12px',
-                                  fontSize: '12px',
-                                  lineHeight: '1.5',
-                                  wordBreak: 'break-word',
-                                  whiteSpace: 'pre-wrap',
-                                  border: '1px solid #eaeaea',
-                                  borderRadius: '4px',
-                                  background: '#fafafa',
-                                  boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.05)'
-                                }}>
-                                  {row[header]}
-                                </div>
-                              </td>
-                            );
-                          } else {
-                            return (
-                              <td key={cellIndex} style={{ 
-                                padding: '12px', 
-                                verticalAlign: 'top',
-                                color: header === 'sentiment' ? 
-                                  (row[header] === 'positive' ? '#4CAF50' : 
-                                   row[header] === 'negative' ? '#F44336' : '#9E9E9E') : 'inherit',
-                                fontWeight: header === 'sentiment' || header === '强度' ? 500 : 'normal'
-                              }}>
-                                {row[header]}
-                              </td>
-                            );
-                          }
-                        })}
-                      </tr>
-                    ))
-                  ) : (
-                    // 原来的显示逻辑作为后备
-                    directDisplayItems.map((item, index) => {
-                      const rowSpan = item.AspectAnalyses.length;
-                      return (
-                        <>
-                          {item.AspectAnalyses.map((aspect, aspectIndex) => (
-                            <tr 
-                              key={`${item.Review_ID}-${aspectIndex}`}
-                              className="table-row-hover"
-                              style={{ 
-                                background: index % 2 === 0 ? 'white' : '#F9FAFB',
-                                borderBottom: '1px solid #E5E7EB'
-                              }}
-                            >
-                              {aspectIndex === 0 && (
-                                <>
-                                  <td 
-                                    rowSpan={rowSpan}
-                                    style={{ 
-                                      padding: '12px', 
-                                      verticalAlign: 'top',
-                                      textAlign: 'center',
-                                      fontWeight: 500,
-                                      color: '#555',
-                                      borderRight: '1px solid #E5E7EB',
-                                    }}
-                                  >
-                                    {item.Review_ID}
-                                  </td>
-                                  <td 
-                                    rowSpan={rowSpan}
-                                    style={{ 
-                                      padding: '12px', 
-                                      maxWidth: '400px',
-                                      width: '400px',
-                                      verticalAlign: 'top',
-                                      position: 'relative',
-                                      borderRight: '1px solid #E5E7EB',
-                                    }}
-                                  >
-                                    <div className="custom-scrollbar" style={{
-                                      overflowY: 'auto',
-                                      overflowX: 'auto',
-                                      maxHeight: '250px',
-                                      padding: '12px 15px',
-                                      fontSize: '13px',
-                                      lineHeight: '1.6',
-                                      wordBreak: 'break-word',
-                                      whiteSpace: 'pre-wrap',
-                                      border: '1px solid #eaeaea',
-                                      borderRadius: '4px',
-                                      background: '#fafafa',
-                                      boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.05)',
-                                      fontStyle: item.Content.startsWith('Row ') ? 'italic' : 'normal',
-                                      color: item.Content.startsWith('Row ') ? '#888' : 'inherit'
-                                    }}>
-                                      {item.Content.startsWith('Row ') ? 
-                                        `[Default Row ID: ${item.Content.substring(4)}]` : 
-                                        item.Content}
-                                    </div>
-                                  </td>
-                                </>
-                              )}
-                              <td style={{ padding: '12px', fontWeight: 500, maxWidth: '100px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                {aspect.Aspect}
-                              </td>
-                              <td style={{ 
-                                padding: '12px', 
-                                color: aspect.Sentiment === 'positive' ? '#4CAF50' : 
-                                      aspect.Sentiment === 'negative' ? '#F44336' : '#9E9E9E',
-                                fontWeight: 500
-                              }}>
-                                {aspect.Sentiment.charAt(0).toUpperCase() + aspect.Sentiment.slice(1)}
-                              </td>
-                              <td style={{ padding: '12px', textAlign: 'center' }}>
-                                {`${aspect.Confidence}%`}
-                              </td>
-                              <td style={{ padding: '12px' }}>
-                                {aspect.Reason}
-                              </td>
-                            </tr>
-                          ))}
-                        </>
-                      );
-                    })
-                  )}
+                  {directDisplayItems.map((item, index) => {
+                    // 为每行设置背景色
+                    const rowBackground = index % 2 === 0 ? '#f9f9f9' : 'white';
+                    
+                    // 计算内容单元格的rowSpan
+                    const rowSpan = item.AspectAnalyses.length;
+                    
+                    return (
+                      <>
+                        {item.AspectAnalyses.map((aspect, aspectIndex) => (
+                          <tr 
+                            className="table-row-hover" 
+                            key={`item-${index}-aspect-${aspectIndex}`} 
+                            style={{ 
+                              borderBottom: aspectIndex === item.AspectAnalyses.length - 1 ? '1px solid #E5E7EB' : 'none',
+                              backgroundColor: rowBackground
+                            }}
+                          >
+                            {aspectIndex === 0 && (
+                              <>
+                                <td 
+                                  rowSpan={rowSpan}
+                                  style={{ 
+                                    padding: '12px', 
+                                    verticalAlign: 'top',
+                                    textAlign: 'center',
+                                    fontWeight: 500,
+                                    color: '#555',
+                                    borderRight: '1px solid #E5E7EB',
+                                  }}
+                                >
+                                  {item.Review_ID}
+                                </td>
+                                <td 
+                                  rowSpan={rowSpan}
+                                  style={{ 
+                                    padding: '12px', 
+                                    maxWidth: '400px',
+                                    width: '400px',
+                                    verticalAlign: 'top',
+                                    position: 'relative',
+                                    borderRight: '1px solid #E5E7EB',
+                                  }}
+                                >
+                                  <div className="custom-scrollbar" style={{
+                                    overflowY: 'auto',
+                                    overflowX: 'auto',
+                                    maxHeight: '250px',
+                                    padding: '12px 15px',
+                                    fontSize: '13px',
+                                    lineHeight: '1.6',
+                                    wordBreak: 'break-word',
+                                    whiteSpace: 'pre-wrap',
+                                    border: '1px solid #eaeaea',
+                                    borderRadius: '4px',
+                                    background: '#fafafa',
+                                    boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.05)',
+                                    fontStyle: item.Content && item.Content.startsWith('Row ') ? 'italic' : 'normal',
+                                    color: item.Content && item.Content.startsWith('Row ') ? '#888' : 'inherit'
+                                  }}>
+                                    {item.Content && item.Content.startsWith('Row ') ? 
+                                      `[Default Row ID: ${item.Content.substring(4)}]` : 
+                                      item.Content}
+                                  </div>
+                                </td>
+                              </>
+                            )}
+                            <td style={{ padding: '12px', fontWeight: 500, maxWidth: '100px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {aspect.Aspect}
+                            </td>
+                            <td style={{ 
+                              padding: '12px', 
+                              color: aspect.Sentiment === 'positive' ? '#4CAF50' : 
+                                    aspect.Sentiment === 'negative' ? '#F44336' : '#9E9E9E',
+                              fontWeight: 500
+                            }}>
+                              {aspect.Sentiment.charAt(0).toUpperCase() + aspect.Sentiment.slice(1)}
+                            </td>
+                            <td style={{ padding: '12px', textAlign: 'center' }}>
+                              {aspect.Intensity}
+                            </td>
+                            <td style={{ padding: '12px' }}>
+                              {aspect.Reason}
+                            </td>
+                          </tr>
+                        ))}
+                      </>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -803,7 +711,7 @@ export default function LLMSentiment() {
 
           <button
             onClick={() => {
-              window.open(`http://localhost:8001/api/llm-sentiment/download/${tableResult.output_file}`, '_blank');
+              window.open(API_ENDPOINTS.LLM_SENTIMENT_DOWNLOAD(tableResult.output_file), '_blank');
             }}
             style={{
               padding: '8px 16px',
@@ -1067,7 +975,7 @@ export default function LLMSentiment() {
                       fontFamily: 'SF Pro',
                       fontWeight: 400,
                       lineHeight: '24px',
-                      color: 'rgba(0, 5, 29, 0.45)'
+                      color: '#000000'
                     }}
                     onKeyPress={(e) => {
                       if (e.key === 'Enter') {

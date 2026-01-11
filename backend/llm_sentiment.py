@@ -4,6 +4,7 @@ import time
 import pandas as pd
 import csv
 from openai import OpenAI
+import httpx
 from datetime import datetime
 import logging
 import sys
@@ -22,7 +23,18 @@ api_key = os.getenv("OPENAI_API_KEY")
 if not api_key:
     raise ValueError("OPENAI_API_KEY environment variable is not set")
 
-client = OpenAI(api_key=api_key)
+# 创建自定义的 HTTP 客户端，避免代理问题
+http_client = httpx.Client(
+    timeout=30.0,
+    limits=httpx.Limits(max_keepalive_connections=5, max_connections=10)
+)
+
+# 初始化 OpenAI 客户端
+client = OpenAI(
+    api_key=api_key,
+    base_url="https://api.openai.com/v1",
+    http_client=http_client
+)
 
 # 配置日志
 logging.basicConfig(
@@ -47,7 +59,9 @@ class AspectAnalysis(BaseModel):
     reason: str
 
 class AnalysisResult(BaseModel):
+    aspect: str
     sentiment: str
+    intensity: float
     score: float
     polarity: float
     brief_analysis: str
@@ -60,6 +74,7 @@ class TableAnalysisResult(BaseModel):
     summary: Dict[str, int]
     output_file: str
     original_texts: Optional[List[str]] = None
+    aspect_details: Optional[List[Dict]] = None
 
 class ChatRequest(BaseModel):
     message: str
@@ -146,21 +161,31 @@ def build_prompt(text: str) -> str:
     """
     构建情感分析提示模板
     """
-    return f"""Please analyze the following game review and respond in the following format:
+    return f"""Please analyze the following game review and identify ALL aspects mentioned. Respond in the following format:
 
-Overall Sentiment: [Positive/Neutral/Negative]
-Overall Intensity: [Number]
-- Positive sentiment: 1 to 5 (1=slightly positive, 5=extremely positive)
-- Negative sentiment: -1 to -5 (-1=slightly negative, -5=extremely negative)
-- Neutral sentiment: 0
+ASPECTS_ANALYSIS:
+[For each aspect found, use this format:]
 
-Brief Analysis: [Provide a concise analysis in 30 words or less, focusing on the main points of the review]
+Aspect: [Choose from: Gameplay, Graphics, Sound, Story, Performance, UI/UX, Game Balance, Monetization, Community, Overall Experience]
+Sentiment: [Positive/Neutral/Negative]
+Intensity: [Number]
+- Positive sentiment: 1.0 to 5.0 (1.0=slightly positive, 5.0=extremely positive)
+- Negative sentiment: -1.0 to -5.0 (-1.0=slightly negative, -5.0=extremely negative)  
+- Neutral sentiment: 0.0
+Analysis: [Brief analysis for this specific aspect, 20 words or less]
+
+[Repeat above format for each aspect found]
+
+OVERALL_SUMMARY:
+Brief Analysis: [Overall summary of the review in 30 words or less]
 
 Important Guidelines:
-1. Keep the brief analysis under 30 words
-2. Focus on the most important aspects mentioned in the review
-3. Ensure intensity values match the sentiment (positive numbers for positive, negative for negative)
-4. Intensity values must be non-zero and include one decimal place
+1. Identify ALL aspects mentioned in the review (typically 1-5 aspects)
+2. If no specific aspects are clearly mentioned, use "Overall Experience"
+3. Each aspect should have its own sentiment and intensity
+4. Intensity values must match sentiment (positive numbers for positive, negative for negative)
+5. Use decimal format (e.g., 2.5, -3.0)
+6. Keep individual aspect analysis under 20 words each
 
 Review Content: "{text}"
 
@@ -202,36 +227,110 @@ def analyze_sentiment(text: str, max_retries: int = 3) -> Dict:
                 response_text = response.choices[0].message.content.strip()
                 logging.info(f"\nAPI Response:\n{response_text}\n")
                 
-                lines = response_text.split('\n')
-                overall_sentiment = "unknown"
-                overall_intensity = 0
+                # 解析多个aspects的分析结果
+                aspects_list = []
                 brief_analysis = ""
                 
+                lines = response_text.split('\n')
+                current_aspect = None
+                current_sentiment = None
+                current_intensity = 0.0
+                current_analysis = ""
+                
+                in_aspects_section = False
+                in_summary_section = False
+                
                 for line in lines:
-                    if "Overall Sentiment:" in line:
-                        overall_sentiment = line.split(':', 1)[1].strip()
-                    elif "Overall Intensity:" in line:
-                        try:
-                            overall_intensity = float(line.split(':', 1)[1].strip())
-                        except (ValueError, IndexError):
-                            pass
-                    elif "Brief Analysis:" in line:
-                        brief_analysis = line.split(':', 1)[1].strip()
+                    line = line.strip()
+                    if not line:
+                        continue
+                        
+                    if "ASPECTS_ANALYSIS:" in line:
+                        in_aspects_section = True
+                        in_summary_section = False
+                        continue
+                    elif "OVERALL_SUMMARY:" in line:
+                        # 保存当前aspect（如果有的话）
+                        if current_aspect and current_sentiment:
+                            aspects_list.append({
+                                "aspect": current_aspect,
+                                "sentiment": current_sentiment.lower(),
+                                "intensity": current_intensity,
+                                "analysis": current_analysis
+                            })
+                        in_aspects_section = False
+                        in_summary_section = True
+                        current_aspect = None
+                        current_sentiment = None
+                        current_intensity = 0.0
+                        current_analysis = ""
+                        continue
+                    
+                    if in_aspects_section:
+                        if line.startswith("Aspect:"):
+                            # 保存上一个aspect（如果有的话）
+                            if current_aspect and current_sentiment:
+                                aspects_list.append({
+                                    "aspect": current_aspect,
+                                    "sentiment": current_sentiment.lower(),
+                                    "intensity": current_intensity,
+                                    "analysis": current_analysis
+                                })
+                            # 开始新的aspect
+                            current_aspect = line.split(':', 1)[1].strip()
+                            current_sentiment = None
+                            current_intensity = 0.0
+                            current_analysis = ""
+                        elif line.startswith("Sentiment:"):
+                            current_sentiment = line.split(':', 1)[1].strip()
+                        elif line.startswith("Intensity:"):
+                            try:
+                                current_intensity = float(line.split(':', 1)[1].strip())
+                            except (ValueError, IndexError):
+                                current_intensity = 0.0
+                        elif line.startswith("Analysis:"):
+                            current_analysis = line.split(':', 1)[1].strip()
+                    
+                    elif in_summary_section:
+                        if line.startswith("Brief Analysis:"):
+                            brief_analysis = line.split(':', 1)[1].strip()
+                
+                # 保存最后一个aspect（如果有的话）
+                if current_aspect and current_sentiment:
+                    aspects_list.append({
+                        "aspect": current_aspect,
+                        "sentiment": current_sentiment.lower(),
+                        "intensity": current_intensity,
+                        "analysis": current_analysis
+                    })
+                
+                # 如果没有找到任何aspects，创建一个默认的
+                if not aspects_list:
+                    aspects_list.append({
+                        "aspect": "Overall Experience",
+                        "sentiment": "neutral",
+                        "intensity": 0.0,
+                        "analysis": brief_analysis or "No specific aspects detected."
+                    })
+                
+                # 返回第一个aspect作为主要aspect（保持向后兼容）
+                main_aspect_data = aspects_list[0]
                 
                 # 计算情感得分和极性
                 sentiment_score = 0
-                if overall_sentiment.lower() == "positive":
+                if main_aspect_data["sentiment"] == "positive":
                     sentiment_score = 100
-                elif overall_sentiment.lower() == "negative":
+                elif main_aspect_data["sentiment"] == "negative":
                     sentiment_score = -100
                 
-                polarity = overall_intensity
-                
                 return {
-                    "sentiment": overall_sentiment.lower(),
+                    "aspect": main_aspect_data["aspect"],
+                    "sentiment": main_aspect_data["sentiment"],
+                    "intensity": main_aspect_data["intensity"],
                     "score": abs(sentiment_score),
-                    "polarity": polarity,
-                    "brief_analysis": brief_analysis
+                    "polarity": main_aspect_data["intensity"],
+                    "brief_analysis": brief_analysis or main_aspect_data["analysis"],
+                    "aspects": aspects_list  # 包含所有aspects的列表
                 }
                 
             except Exception as e:
@@ -244,10 +343,18 @@ def analyze_sentiment(text: str, max_retries: int = 3) -> Dict:
     except Exception as e:
         logging.error(f"Analysis failed: {str(e)}")
         return {
+            "aspect": "Overall Experience",
             "sentiment": "unknown",
+            "intensity": 0.0,
             "score": 0,
             "polarity": 0,
-            "brief_analysis": f"Analysis failed: {str(e)}"
+            "brief_analysis": f"Analysis failed: {str(e)}",
+            "aspects": [{
+                "aspect": "Overall Experience",
+                "sentiment": "unknown",
+                "intensity": 0.0,
+                "analysis": f"Analysis failed: {str(e)}"
+            }]
         }
 
 def ensure_output_dir():
@@ -360,17 +467,25 @@ async def analyze_file(file: UploadFile = File(...)) -> TableAnalysisResult:
                 logging.error(f"Failed to analyze text {i+1}: {str(e)}")
                 # 即使分析失败，也要添加默认结果以保持长度一致
                 results.append({
+                    "aspect": "Overall Experience",
                     "sentiment": "unknown",
+                    "intensity": 0.0,
                     "score": 0,
                     "polarity": 0,
-                    "brief_analysis": f"Analysis failed: {str(e)}"
+                    "brief_analysis": f"Analysis failed: {str(e)}",
+                    "aspects": [{
+                        "aspect": "Overall Experience",
+                        "sentiment": "unknown",
+                        "intensity": 0.0,
+                        "analysis": f"Analysis failed: {str(e)}"
+                    }]
                 })
                 original_texts.append(text)
         
         if not results:
             raise HTTPException(status_code=500, detail="Failed to analyze any text in the file")
         
-        # 计算统计信息
+        # 计算统计信息 - 基于所有aspects
         sentiment_counts = {
             'positive': 0,
             'negative': 0,
@@ -378,9 +493,19 @@ async def analyze_file(file: UploadFile = File(...)) -> TableAnalysisResult:
         }
         
         for result in results:
-            sentiment = result['sentiment']
-            if sentiment in sentiment_counts:
-                sentiment_counts[sentiment] += 1
+            # 统计所有aspects的情感分布
+            aspects_list = result.get('aspects', [])
+            if not aspects_list:
+                # 后备：使用主要sentiment
+                sentiment = result.get('sentiment', 'unknown')
+                if sentiment in sentiment_counts:
+                    sentiment_counts[sentiment] += 1
+            else:
+                # 统计每个aspect的sentiment
+                for aspect_data in aspects_list:
+                    sentiment = aspect_data.get('sentiment', 'unknown')
+                    if sentiment in sentiment_counts:
+                        sentiment_counts[sentiment] += 1
         
         logging.info(f"Sentiment counts: {sentiment_counts}")
         
@@ -388,32 +513,55 @@ async def analyze_file(file: UploadFile = File(...)) -> TableAnalysisResult:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         output_file = f"llm_analysis_{timestamp}.csv"
         
-        # 保存结果到 CSV
+        # 保存结果到 CSV - 新逻辑：为每个aspect生成一行
         try:
             output_path = os.path.join('output', output_file)
             
-            # 确保使用原始的DataFrame（去除空值后）
-            results_df = df.reset_index(drop=True).copy()
-            
             logging.info(f"=== 保存CSV调试信息 ===")
-            logging.info(f"原始DataFrame列: {results_df.columns.tolist()}")
-            logging.info(f"原始DataFrame形状: {results_df.shape}")
             logging.info(f"分析结果数量: {len(results)}")
+            logging.info(f"原始文本数量: {len(original_texts)}")
             
-            # 检查长度一致性
-            if len(results_df) != len(results):
-                raise ValueError(f"数据长度不匹配: df={len(results_df)}, results={len(results)}")
+            # 创建新的DataFrame，为每个aspect生成一行
+            csv_rows = []
             
-            # 添加分析结果列
-            results_df['sentiment'] = [r['sentiment'] for r in results]
-            results_df['强度'] = [r['polarity'] for r in results]
-            results_df['reason'] = [r['brief_analysis'] for r in results]
+            for i, (result, original_text) in enumerate(zip(results, original_texts)):
+                review_id = i + 1
+                
+                # 获取所有aspects（如果有的话）
+                aspects_list = result.get('aspects', [])
+                if not aspects_list:
+                    # 后备：使用主要aspect信息
+                    aspects_list = [{
+                        'aspect': result.get('aspect', 'Overall Experience'),
+                        'sentiment': result.get('sentiment', 'unknown'),
+                        'intensity': result.get('intensity', 0.0),
+                        'analysis': result.get('brief_analysis', 'No analysis available')
+                    }]
+                
+                # 为每个aspect创建一行
+                for aspect_data in aspects_list:
+                    row = {
+                        'Review_ID': review_id,
+                        'Content': original_text,
+                        'aspect': aspect_data['aspect'],
+                        'sentiment': aspect_data['sentiment'],
+                        'intensity': aspect_data['intensity'],
+                        'reason': aspect_data.get('analysis', result.get('brief_analysis', 'No analysis available'))
+                    }
+                    csv_rows.append(row)
             
-            # 去掉Title列，只保留需要的列
-            columns_to_keep = ['Review_ID', 'Content', 'sentiment', '强度', 'reason']
-            # 检查哪些列存在于DataFrame中
+            # 创建DataFrame
+            results_df = pd.DataFrame(csv_rows)
+            
+            logging.info(f"生成的CSV行数: {len(csv_rows)}")
+            logging.info(f"最终DataFrame列: {results_df.columns.tolist()}")
+            logging.info(f"最终DataFrame形状: {results_df.shape}")
+            if not results_df.empty:
+                logging.info(f"第一行数据: {results_df.iloc[0].to_dict()}")
+            
+            # 定义要保留的列
+            columns_to_keep = ['Review_ID', 'Content', 'aspect', 'sentiment', 'intensity', 'reason']
             existing_columns = [col for col in columns_to_keep if col in results_df.columns]
-            results_df = results_df[existing_columns]
             
             logging.info(f"最终DataFrame列: {results_df.columns.tolist()}")
             logging.info(f"最终DataFrame形状: {results_df.shape}")
@@ -465,13 +613,42 @@ async def analyze_file(file: UploadFile = File(...)) -> TableAnalysisResult:
             logging.error(f"保存结果失败: {str(e)}")
             raise HTTPException(status_code=500, detail=f"保存结果失败: {str(e)}")
         
+        # 计算总的aspect数量（CSV中的行数）
+        total_aspects = sum(len(result.get('aspects', [result])) for result in results)
+        
+        # 构建aspect_details列表，用于前端显示
+        aspect_details = []
+        for result in results:
+            aspects_list = result.get('aspects', [])
+            if not aspects_list:
+                # 后备：使用主要aspect信息
+                aspects_list = [{
+                    'aspect': result.get('aspect', 'Overall Experience'),
+                    'sentiment': result.get('sentiment', 'unknown'),
+                    'intensity': result.get('intensity', 0.0),
+                    'analysis': result.get('brief_analysis', 'No analysis available')
+                }]
+            
+            # 为每个aspect创建详情记录
+            for aspect_data in aspects_list:
+                aspect_detail = {
+                    'aspect': aspect_data['aspect'],
+                    'sentiment': aspect_data['sentiment'],
+                    'intensity': aspect_data['intensity'],
+                    'reason': aspect_data.get('analysis', result.get('brief_analysis', 'No analysis available'))
+                }
+                aspect_details.append(aspect_detail)
+        
+        logging.info(f"构建的aspect_details数量: {len(aspect_details)}")
+        
         return TableAnalysisResult(
-            total_rows=len(results),
+            total_rows=total_aspects,  # 现在表示aspects的总数，不是原始评论数
             analyzed_column=text_column,
             results=results,
             summary=sentiment_counts,
             output_file=output_file,
-            original_texts=original_texts
+            original_texts=original_texts,
+            aspect_details=aspect_details
         )
         
     except Exception as e:
@@ -487,6 +664,25 @@ async def download_file(filename: str):
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="File not found")
     return FileResponse(file_path, filename=filename)
+
+def detect_language(text: str) -> str:
+    """
+    检测文本语言（简单版本）
+    """
+    # 统计中文字符数量
+    chinese_chars = sum(1 for char in text if '\u4e00' <= char <= '\u9fff')
+    # 统计英文单词数量（简单估算）
+    english_words = len([word for word in text.split() if word.isalpha() and all(ord(char) < 128 for char in word)])
+    
+    # 如果中文字符占比较高，判断为中文
+    if chinese_chars > len(text) * 0.1:
+        return 'zh'
+    # 如果有英文单词且中文字符很少，判断为英文
+    elif english_words > 0 and chinese_chars < len(text) * 0.05:
+        return 'en'
+    # 默认根据中文字符数量决定
+    else:
+        return 'zh' if chinese_chars > 0 else 'en'
 
 def is_sentiment_related_question(message: str) -> bool:
     """
@@ -542,15 +738,25 @@ def generate_chat_response(message: str, analysis_data: Optional[Dict] = None, c
     生成基于情感分析的对话回复，支持aspect总结和片段列举
     """
     try:
+        # 检测用户输入的语言
+        user_language = detect_language(message)
+        
         # 检查是否为情感分析相关问题
         if not is_sentiment_related_question(message):
+            # 根据用户语言返回对应的回复
+            if user_language == 'zh':
+                not_related_message = "抱歉，我只能提供与情感分析相关的见解和分析。请询问关于情感、观点、评论或情感分析相关的问题！"
+            else:
+                not_related_message = "Sorry, I can only provide insights and analysis related to sentiment analysis. Please ask questions about sentiments, opinions, reviews, or sentiment analysis!"
+            
             return {
-                "message": "抱歉，我只能提供与情感分析相关的见解和分析。请询问关于情感、观点、评论或情感分析相关的问题！",
+                "message": not_related_message,
                 "is_sentiment_related": False
             }
         
-        # 构建增强的系统提示
-        system_prompt = """你是一个专业的情感分析助手，具备以下能力：
+        # 根据用户语言构建系统提示
+        if user_language == 'zh':
+            system_prompt = """你是一个专业的情感分析助手，具备以下能力：
 
 1. **情感分析**: 分析文本的情感倾向、强度和极性
 2. **方面分析**: 针对特定方面(aspect)进行深入分析
@@ -562,7 +768,7 @@ def generate_chat_response(message: str, analysis_data: Optional[Dict] = None, c
 - 只回答与情感分析、情绪、观点、评论相关的问题
 - 如果用户询问无关话题，请礼貌地引导回到情感分析相关内容
 - 基于提供的分析数据回答问题，如果没有数据则提供一般性指导
-- 支持中英文双语交流
+- 用中文回答用户的问题
 - 回答要准确、有用，重点关注情感相关洞察
 
 **特殊功能**:
@@ -570,12 +776,34 @@ def generate_chat_response(message: str, analysis_data: Optional[Dict] = None, c
 - 当用户要求列举片段时，从分析数据中提取相关的文本内容
 - 支持按情感极性(正面/负面/中性)筛选内容
 - 支持按特定关键词或主题筛选相关评论"""
+        else:
+            system_prompt = """You are a professional sentiment analysis assistant with the following capabilities:
+
+1. **Sentiment Analysis**: Analyze text sentiment tendencies, intensity, and polarity
+2. **Aspect Analysis**: Conduct in-depth analysis on specific aspects
+3. **Content Summarization**: Provide summaries and statistics of sentiment analysis results
+4. **Segment Listing**: List relevant text segments as requested
+5. **Trend Analysis**: Analyze sentiment distribution and change trends
+
+**Important Rules**:
+- Only answer questions related to sentiment analysis, emotions, opinions, and reviews
+- If users ask unrelated questions, politely guide them back to sentiment analysis content
+- Base answers on provided analysis data, or provide general guidance if no data is available
+- Answer user questions in English
+- Answers should be accurate, useful, and focus on sentiment-related insights
+
+**Special Features**:
+- When users request summaries of specific aspects, provide sentiment distribution, key issues, and improvement suggestions for those aspects
+- When users request segment listings, extract relevant text content from analysis data
+- Support filtering content by sentiment polarity (positive/negative/neutral)
+- Support filtering relevant comments by specific keywords or themes"""
         
         # 构建用户提示，包含分析数据
         user_prompt = message
         if analysis_data:
-            # 构建更详细的数据描述
-            data_description = f"""
+            # 根据用户语言构建数据描述
+            if user_language == 'zh':
+                data_description = f"""
 基于以下情感分析结果回答用户问题：
 
 **数据概览**:
@@ -593,6 +821,25 @@ def generate_chat_response(message: str, analysis_data: Optional[Dict] = None, c
 **用户问题**: {message}
 
 请根据用户的具体需求，提供相应的分析、总结或建议。如果用户询问特定方面(如"Game Balance")，请重点分析该方面的情感分布和主要问题。"""
+            else:
+                data_description = f"""
+Answer the user's question based on the following sentiment analysis results:
+
+**Data Overview**:
+- Total analyzed entries: {analysis_data.get('total_rows', 'N/A')}
+- Analyzed column: {analysis_data.get('analyzed_column', 'N/A')}
+- Sentiment distribution: 
+  * Positive: {analysis_data.get('summary', {}).get('positive', 0)} entries
+  * Negative: {analysis_data.get('summary', {}).get('negative', 0)} entries  
+  * Neutral: {analysis_data.get('summary', {}).get('neutral', 0)} entries
+
+**Data Details**: 
+If the user asks about specific content, segments, or cases, please provide analysis and suggestions based on these statistics.
+If the user requests specific negative/positive comment segments, please explain the situation based on current data and provide typical issue types that might be included in that category.
+
+**User Question**: {message}
+
+Please provide appropriate analysis, summaries, or suggestions based on the user's specific needs. If the user asks about specific aspects (like "Game Balance"), please focus on analyzing the sentiment distribution and main issues for that aspect."""
             user_prompt = data_description
         
         if context:
@@ -618,8 +865,15 @@ def generate_chat_response(message: str, analysis_data: Optional[Dict] = None, c
         
     except Exception as e:
         logging.error(f"Chat response generation failed: {str(e)}")
+        # 检测用户语言以返回对应的错误信息
+        user_language = detect_language(message)
+        if user_language == 'zh':
+            error_message = "抱歉，在处理您的问题时遇到了错误，请重试。如果您有情感分析相关的问题，我很乐意为您提供帮助。"
+        else:
+            error_message = "Sorry, an error occurred while processing your question. Please try again. If you have sentiment analysis related questions, I'd be happy to help."
+        
         return {
-            "message": "抱歉，在处理您的问题时遇到了错误，请重试。如果您有情感分析相关的问题，我很乐意为您提供帮助。",
+            "message": error_message,
             "is_sentiment_related": True
         }
 
@@ -641,7 +895,13 @@ async def chat_with_sentiment_assistant(request: ChatRequest) -> ChatResponse:
         )
     except Exception as e:
         logging.error(f"Chat API failed: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        # 检测用户语言以返回对应的错误信息
+        user_language = detect_language(request.message)
+        if user_language == 'zh':
+            error_detail = f"聊天API出错: {str(e)}"
+        else:
+            error_detail = f"Chat API error: {str(e)}"
+        raise HTTPException(status_code=500, detail=error_detail)
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8001) 
